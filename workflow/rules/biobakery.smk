@@ -38,10 +38,10 @@ localrules:
 #krona = f"reports/{config['sample']}_metaphlan3_profile.txt.krona.html"
 
 pabun_cpm = expand("humann/{SAMPLE}_humann3_pathabundance_cpm.tsv",SAMPLE=config['sample'])
-metaphlan = expand("metaphlan/{SAMPLE}_metaphlan3_profile.txt",SAMPLE=config['sample'])
+metaphlan = expand("metaphlan/{SAMPLE}_metaphlan4_profile.txt",SAMPLE=config['sample'])
 ko_cpm = expand("humann/{SAMPLE}_humann3_KO_cpm.tsv",SAMPLE=config['sample'])
 metaphlan_sam = expand("metaphlan/{SAMPLE}.sam.bz2",SAMPLE=config['sample'])
-krona = expand("reports/{SAMPLE}_metaphlan3_profile.txt.krona.html",SAMPLE=config['sample'])
+krona = expand("reports/{SAMPLE}_metaphlan4_profile.txt.krona.html",SAMPLE=config['sample'])
 
 
 all_inputs = [
@@ -76,7 +76,7 @@ rule cat_pair:
 rule humann3_run_uniref90:
     input:
         fastq="kneaddata/{sample}_knead_cat.fastq.gz",
-        metaphlan_profile="metaphlan/{sample}_metaphlan3_profile.txt",
+        metaphlan_profile="metaphlan/{sample}_metaphlan4_profile.txt",
         choco_db=config["choco_db"],
         uniref90_db=config["uniref90_db"],
     output:
@@ -260,13 +260,13 @@ rule split_stratified:
         """
 
 
-# Metaphlan3 and Strainphlan
+# Metaphlan4 and Strainphlan
 rule metaphlan_run:
     input:
         fastq="kneaddata/{sample}_knead_cat.fastq.gz",
         db=config["metaphlan_db"],
     output:
-        outfile="metaphlan/{sample}_metaphlan3_profile.txt",
+        outfile="metaphlan/{sample}_metaphlan4_profile.txt",
         sam="metaphlan/{sample}.sam.bz2",
     container:
         config["docker_biobakery"]
@@ -290,7 +290,7 @@ rule metaphlan_run:
         export METAPHLAN_BOWTIE2_DB={input.db}
         metaphlan {input.fastq} \
             --bowtie2db {input.db} \
-            --index mpa_vJan21_CHOCOPhlAnSGB_202103 \
+            --index mpa_vJun23_CHOCOPhlAnSGB_202403 \
             --input_type fastq \
             --sample_id  {wildcards.sample} \
             -s {output.sam} \
@@ -305,9 +305,9 @@ rule metaphlan_run:
 
 rule metaphlan2_krona:
     input:
-        infile="metaphlan/{sample}_metaphlan3_profile.txt",
+        infile="metaphlan/{sample}_metaphlan4_profile.txt",
     output:
-        outfile="metaphlan/{sample}_metaphlan3_profile.txt.krona",
+        outfile="metaphlan/{sample}_metaphlan4_profile.txt.krona",
     container:
         config["docker_biobakery"]
     conda:
@@ -326,9 +326,9 @@ rule metaphlan2_krona:
 
 rule krona:
     input:
-        infile="metaphlan/{sample}_metaphlan3_profile.txt.krona",
+        infile="metaphlan/{sample}_metaphlan4_profile.txt.krona",
     output:
-        outfile="reports/{sample}_metaphlan3_profile.txt.krona.html",
+        outfile="reports/{sample}_metaphlan4_profile.txt.krona.html",
     container:
         config["docker_krona"]
     resources:

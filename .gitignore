@@ -6,3 +6,4 @@ tmp*
 vdb_16S/test_output/
 .test/*
 *__pycache__*
+manifest_sample.csv
