@@ -1,6 +1,6 @@
 ## Inputs
 lib_layout: "paired"
-assembly: ""
+assembly: None
 
 ## bbmap
 adapters_fasta: "/data/brinkvd/resources/references/synthetic/stephenturner-adapters/93b5f91/adapters_combined_256_unique.fasta"

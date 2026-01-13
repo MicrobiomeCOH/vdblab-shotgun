@@ -15,7 +15,6 @@ configfile: os.path.join(str(workflow.basedir), "../../config/config.yaml")
 envvars:
     "TMPDIR",
 
-
 SHARDS = make_shard_names(config["nshards"])
 
 
@@ -23,11 +22,12 @@ localrules:
     all,
 
 
-quast_outputs = [
-    "quast/quast_{sample}/report.pdf".format(sample=config["sample"]),
-    "quast/quast_{sample}/transposed_report.tsv".format(sample=config["sample"]),
-]
-all_inputs = [quast_outputs]
+quast_outputs = expand(
+    ["quast/quast_{sample}/report.pdf",
+    "quast/quast_{sample}/transposed_report.tsv"],
+    sample=config["sample"]
+)
+all_inputs = quast_outputs
 
 
 onstart:
@@ -38,23 +38,23 @@ onstart:
         os.makedirs("logs")
     if config["assembler"].lower() == "spades":
         if len(config["R1"]) > 1:
-            print(
-                "WARNING: Concatenating multiple inputs into a single paired library as metaspades does not support multiple libraries"
-            )
+            print("WARNING: Concatenating multiple inputs into a single paired library as metaspades does not support multiple libraries")
         print("Running SPAdes")
     else:
         print("Running megahit")
 
 
 if config["assembler"].lower() == "spades":
-    assemblies = [
-        f"spades_{config['sample']}.assembly.fasta",
-        f"spades_{config['sample']}_metaviral/scaffolds.fasta",
-    ]
-    assemblies_labels = ",".join(
-        [f"metaspades_{config['sample']}", f"metaviralspades_{config['sample']}"]
+    assemblies = expand(
+        ["spades_{sample}.assembly.fasta",
+        "spades_{sample}_metaviral/scaffolds.fasta"],
+        sample=config["sample"]
     )
-    all_inputs.append(f"{config['sample']}.cleaned_assembly_files")
+    assemblies_labels = ",".join(
+        [f"metaspades_{s},metaviralspades_{s}" for s in config["sample"]]
+    )
+    all_inputs.extend(expand("{sample}.cleaned_assembly_files",
+    sample=config["sample"]))
     all_inputs.extend(assemblies)
 # elif config["assembler"].lower() == "both": # should this be enabled?
 #     assemblies = [f"spades_{config['sample']}.assembly.fasta", f"spades_{config['sample']}_metaviral/scaffolds.fasta", f"megahit_{config['sample']}.assembly.fasta"]
@@ -62,8 +62,8 @@ if config["assembler"].lower() == "spades":
 #     all_inputs.append(f"{config['sample']}.cleaned_assembly_files")
 #     all_inputs.extend(assemblies)
 else:
-    assemblies = [f"megahit_{config['sample']}.assembly.fasta"]
-    assemblies_labels = f"megahit_{config['sample']}"
+    assemblies = expand("megahit_{sample}.assembly.fasta", sample=config["sample"])
+    assemblies_labels = ",".join([f"megahit_{s}" for s in config["sample"]])
     all_inputs.extend(assemblies)
 
 
@@ -73,22 +73,22 @@ rule all:
 
 
 #
-if len(config["R1"]) == 1:
-    input_R1 = config["R1"]
-    input_R2 = config["R2"]
+if len(config["sample"]) == 1 and len(config["R1"][config["sample"][0]]) == 1:
+    input_R1 = config["R1"][config["sample"][0]]
+    input_R2 = config["R2"][config["sample"][0]]
 else:
-    input_R1 = [f"concatenated/{config['sample']}_R1.fastq.gz"]
-    input_R2 = [f"concatenated/{config['sample']}_R2.fastq.gz"]
+    input_R1 = expand("concatenated/{sample}_R1.fastq.gz", sample=config["sample"])
+    input_R2 = expand("concatenated/{sample}_R2.fastq.gz", sample=config["sample"])
 
 
 # Utils Module
 module utils:
-    snakefile:
-        "utils.smk"
-    config:
-        config
-    skip_validation:
-        True
+    snakefile: 
+       "utils.smk"
+    config: 
+       config
+    skip_validation: 
+       True
 
 
 '''
@@ -96,7 +96,7 @@ module utils:
 #I can do `use rule * from assembly exclude_rules: concat_lanes_fix_names` in Snakefile to try to fix it.
 use rule concat_lanes_fix_names from utils as utils_concat_lanes_fix_names with:
     input:
-        fq=get_concat_input,
+        fq=get_concat_input_multisample,
     output:
         fq=temp("concatenated/{sample}_R{rd}.fastq.gz"),
     log:
@@ -104,38 +104,43 @@ use rule concat_lanes_fix_names from utils as utils_concat_lanes_fix_names with:
 '''
 
 
+
 rule megahit:
     input:
-        R1=config["R1"],
-        R2=config["R2"],
+        R1=lambda wc: config["R1"][wc.sample],
+        R2=lambda wc: config.get("R2", {}).get(wc.sample, [])
     output:
         outdir=directory("megahit_{sample}"),
-        assembly="megahit_{sample}.assembly.fasta",
+        assembly="megahit_{sample}.assembly.fasta"
     container:
         config["docker_megahit"]
     resources:
-        mem_mb=lambda wildcards, attempt, input: attempt
-        * (max(input.size // 1000000, 1024) * 20),
-        runtime=24 * 60,
+        mem_mb=64000,
+        runtime=24 * 60
     threads: 64
     params:
-        input_string=lambda wildcards, input: str(
+        input_string=lambda wc, input: (
             "-1 " + ",".join(input.R1) + " -2 " + ",".join(input.R2)
-        ),
+            if input.R2 else "-r " + ",".join(input.R1)
+        )
     shell:
         """
-    mkdir -p ${{TMPDIR}}/megahit_{wildcards.sample}/
-    megahit {params.input_string} --out-dir megahit_{wildcards.sample}/ --out-prefix {wildcards.sample} --tmp-dir ${{TMPDIR}}/megahit_{wildcards.sample}/ --memory $(({resources.mem_mb} * 1024 ))  --num-cpu-threads {threads}
-    rm -r ${{TMPDIR}}/megahit_{wildcards.sample}/
-    mv megahit_{wildcards.sample}/{wildcards.sample}.contigs.fa {output.assembly}
-    """
+        mkdir -p ${{TMPDIR}}/megahit_{wildcards.sample}/
+        megahit {params.input_string} \
+            --out-dir megahit_{wildcards.sample}/ \
+            --out-prefix {wildcards.sample} \
+            --tmp-dir ${{TMPDIR}}/megahit_{wildcards.sample}/ \
+            --memory $((64000 * 1024)) \
+            --num-cpu-threads {threads}
+        rm -r ${{TMPDIR}}/megahit_{wildcards.sample}/
+        mv megahit_{wildcards.sample}/{wildcards.sample}.contigs.fa {output.assembly}
+        """
 
 
 rule SPAdes_run:
     # TODO: add in params for read length to experiment with larger kmers than default
     input:
-        R1=input_R1,
-        R2=input_R2,
+        get_config_inputs_multisample
     output:
         assembly="spades_{sample}.assembly.fasta",
         graph="spades_{sample}.assembly_graph.gfa",
@@ -145,9 +150,12 @@ rule SPAdes_run:
     conda:
         "../envs/spades.yaml"
     resources:
-        mem_mb=lambda wildcards, attempt, input: attempt
-        * (max(input.size // 1000000, 1024) * 20),
+        mem_mb=64000,
+        #mem_mb=lambda wc, attempt, input: attempt
+        #* (max(sum(Path(f).stat().st_size for f in input.R1 + input.R2) // 1000000, 1024) * 20),
         runtime=48 * 60,
+    params:
+        input_string=lambda wc, input: "-1 " + ",".join(input.R1) + " -2 " + ",".join(input.R2),
     threads: 64
     log:
         e="logs/spades_{sample}.log",
@@ -159,6 +167,7 @@ rule SPAdes_run:
             -t {threads} \
             --meta \
             -o spades_{wildcards.sample} \
+            --tmp-dir $TMPDIR \
             -m $(({resources.mem_mb}/1024)) \
             2> {log.e}
         mv spades_{wildcards.sample}/scaffolds.fasta {output.assembly}
@@ -170,9 +179,10 @@ rule viral_SPAdes_run:
     # max_kmer https://github.com/ablab/spades/discussions/1188
     # --onlyassembler seems to be neccessary when using assembly graph input
     input:
-        R1=input_R1,
-        R2=input_R2,
-        assembly_graph=rules.SPAdes_run.output.graph,
+        get_config_inputs_multisample,
+        #R1=lambda wc: config["R1"][wc.sample],
+        #R2=lambda wc: config["R2"][wc.sample],
+        assembly_graph="spades_{sample}.assembly_graph.gfa",
     output:
         assembly="spades_{sample}_metaviral/scaffolds.fasta",
         spades_log="spades_{sample}_metaviral/spades.log",
@@ -183,8 +193,8 @@ rule viral_SPAdes_run:
     conda:
         "../envs/spades.yaml"
     resources:
-        mem_mb=lambda wildcards, attempt, input: attempt
-        * (max(input.size // 1000000, 1024) * 20),
+        mem_mb=lambda wc, attempt, input: attempt
+        * (max(sum(Path(f).stat().st_size for f in input.R1 + input.R2) // 1000000, 1024) * 20),
         runtime=48 * 60,
     threads: 64
     log:
@@ -224,14 +234,19 @@ rule quast_run:
     with pulling genomes
     """
     input:
-        assembly=assemblies,
+        assembly=lambda wc: ([f"spades_{wc.sample}.assembly.fasta", f"spades_{wc.sample}_metaviral/scaffolds.fasta"]
+                if config["assembler"].lower() == "spades"
+                else [f"megahit_{wc.sample}.assembly.fasta"]),
         blast_16s_db_nsq=config["blast_16s_db_nsq"],
     output:
         report_tsv="quast/quast_{sample}/transposed_report.tsv",
         report="quast/quast_{sample}/report.pdf",
     params:
         dir="quast/quast_{sample}/",
-        labels=assemblies_labels,
+        labels=lambda wc: (
+                f"metaspades_{wc.sample},metaviralspades_{wc.sample}"
+                if config["assembler"].lower() == "spades"
+                else f"megahit_{wc.sample}"),
     threads: 16
     container:
         config["docker_quast"]
@@ -264,9 +279,7 @@ rule clean_up:
     that step is done before we clean.
     """
     input:
-        agg_files=[
-            "quast/quast_{sample}/report.pdf".format(sample=config["sample"]),
-        ],
+        agg_files=lambda wc: [f"quast/quast_{wc.sample}/report.pdf"],
         spades_log="spades_{sample}/spades.log",
     output:
         touch("{sample}.cleaned_assembly_files"),
@@ -276,3 +289,4 @@ rule clean_up:
         ls spades_{wildcards.sample}/
         find spades_{wildcards.sample}/  -type f | xargs --no-run-if-empty rm
         """
+

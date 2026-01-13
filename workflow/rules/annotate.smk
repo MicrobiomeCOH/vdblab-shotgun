@@ -10,6 +10,9 @@ include: "common.smk"
 
 configfile: os.path.join(workflow.basedir, "../../config/config.yaml")
 
+wildcard_constraints:
+    sample="[^/]+",  # sample cannot contain forward slashes
+    batch="stdin\.part_[0-9]+",
 
 localrules:
     all,
@@ -18,9 +21,30 @@ localrules:
 if not os.path.exists("logs"):
     os.makedirs("logs")
 
+def count_contigs_with_minlen(fasta_path, minlen):
+    n = 0
+    length = 0
+    in_seq = False
+    with open(fasta_path, "r") as fh:
+        for line in fh:
+            if line.startswith(">"):
+                if in_seq and length >= minlen:
+                    n += 1
+                in_seq = True
+                length = 0
+            else:
+                length += len(line.strip())
+        if in_seq and length >= minlen:
+            n += 1
+    return n
+
+SAMPLES = config["sample"] if isinstance(config["sample"], list) else [config["sample"]]
+
+
+
 abricates = expand(
     "{sample}_abricate_{tool}.tab",
-    sample=config["sample"],
+    sample=SAMPLES,
     tool=[
         "argannot",
         "card",
@@ -34,52 +58,84 @@ abricates = expand(
     ],
 )
 
-outputs = [
-    f"{config['sample']}_antismash.gbk",
-    f"{config['sample']}_antismash.tab",
-    f"{config['sample']}_amrfinder.tab",
-    f"{config['sample']}_cazi_overview.txt",
-    f"{config['sample']}_cazi_substrate.out",
-    f"{config['sample']}_annotated_cazymes_RPM.tsv",
-    abricates,
-]
-if config["check_contigs"]:
-    outputs.extend(
-        [f"{config['sample']}_metaerg.gff", f"{config['sample']}_antismash.gbk"]
-    )
-
-
-nseqs = 200
-nparts = 10  # will be overriden on workflow start
-
-
-onstart:
-    ncontigs = 0
-    with open(config["assembly"], "r") as inf:
-        for line in inf:
-            if line.startswith(">"):
-                ncontigs = ncontigs + 1
-    nparts = ceil(ncontigs / nseqs)
-    logger.info(f"Breaking assembly into {nparts} {nseqs}-contig chunks")
-
-
-BATCHES = [f"stdin.part_{x}" for x in make_assembly_split_names(nparts)]
-
+outputs = (expand("{sample}_antismash.gbk", sample=config['sample']) +
+    expand("{sample}_antismash.tab", sample=config['sample']) +
+    expand("{sample}_amrfinder.tab", sample=config['sample']) +
+    expand("{sample}_cazi_overview.txt", sample=config['sample']) +
+    expand("{sample}_cazi_substrate.out", sample=config['sample']) +
+    expand("{sample}_annotated_cazymes_RPM.tsv", sample=config['sample']) +
+    abricates)
+if config.get("check_contigs", False):
+    outputs += expand("{sample}_metaerg.gff", sample=config['sample'])
 
 rule all:
     input:
         outputs,
 
 
+checkpoint split_assembly:
+    """Split assembly into chunks for parallel processing"""
+    input:
+        assembly=lambda wc: config["assembly"][wc.sample] if isinstance(config["assembly"], dict) else config["assembly"],
+    output:
+        splitdir=directory("tmp/{sample}"),
+        #assembly="tmp/{sample}/assembly.fasta",
+        done="tmp/{sample}/.split_done",
+    params:
+        outdir=lambda wc: os.path.abspath("tmp/" + wc.sample),
+        #assembly_copy=lambda wc: os.path.abspath("tmp/" + wc.sample + "/assembly.fasta"),
+        minlen=config["contig_annotation_thresh"],
+        nseqs=config.get("chunk_size_contigs", 200),
+        nbatches=lambda wc, input: calculate_nbatches(
+            str(input.assembly),
+            config["contig_annotation_thresh"],
+            config.get("chunk_size_contigs", 200)
+        ),  
+    container:
+        "docker://pegi3s/seqkit:2.3.0"
+    threads: 4
+    resources:
+        mem_mb=8000,
+    log:
+        e="logs/split_assembly_{sample}.e",
+        o="logs/split_assembly_{sample}.o",
+    shell:
+        """
+        set -e
+        rm -rf {params.outdir}
+        mkdir -p {params.outdir}
+        seqkit shuffle {input.assembly} --two-pass \
+        | seqkit seq --min-len {params.minlen} --threads {threads} \
+        | seqkit split2 --by-part {params.nbatches} --out-dir {params.outdir} --force > "{log.o}" 2>> "{log.e}"
+       
+        touch {output.done}
+        """
+
+
+def calculate_nbatches(assembly_path, minlen, nseqs):
+    """Calculate number of batches needed for splitting assembly"""
+    from math import ceil
+    
+    n_filtered = count_contigs_with_minlen(assembly_path, minlen)
+    if n_filtered <= 0:
+        nbatches = 1
+    else:
+        nbatches = min(ceil(n_filtered / nseqs), n_filtered)
+    
+    print(f"Detected {n_filtered} contigs >= {minlen} bp; splitting into {nbatches} parts")
+    return nbatches
+
+
 rule annotate_orfs:
     container:
         config["docker_metaerg"]
     input:
-        assembly="tmp/{batch}.fasta",
+        #splitdir="tmp/{sample}",
+        assembly="tmp/{sample}/{batch}.fasta",
     output:
-        gff="annotation/annotation_{batch}/data/either_all_or_master.gff",
-        ffn="annotation/annotation_{batch}/data/cds.ffn",
-        faa="annotation/annotation_{batch}/data/cds.faa",
+        gff="annotation/{sample}/annotation_{batch}/data/either_all_or_master.gff",
+        ffn="annotation/{sample}/annotation_{batch}/data/cds.ffn",
+        faa="annotation/{sample}/annotation_{batch}/data/cds.faa",
     resources:
         mem_mb=8 * 1024,
         runtime=45,
@@ -92,26 +148,104 @@ rule annotate_orfs:
         # currently the output_report.pl script is failing
         # see issues https://github.com/xiaoli-dong/metaerg/pull/38 and
         # https://github.com/xiaoli-dong/metaerg/issues/12
-        set -e
-        metaerg.pl --cpus {threads} --dbdir {params.metaerg_db_dir} --outdir annotation/annotation_{wildcards.batch} --locustag {wildcards.batch} {input.assembly} --force || echo "Finished running Metaerg"
+        set +e
+        metaerg.pl --cpus {threads} --dbdir {params.metaerg_db_dir} --outdir annotation/{wildcards.sample}/annotation_{wildcards.batch} --locustag {wildcards.sample}_{wildcards.batch} {input.assembly} --force || echo "Finished running Metaerg"
         # if metaerg successfully packaged everything up
-        if [ -f "annotation/annotation_{wildcards.batch}/data/master.gff.txt" ]
+        if [ -f "annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/master.gff.txt" ]
         then
-            mv annotation/annotation_{wildcards.batch}/data/master.gff.txt {output.gff}
+            echo "MetaERG completed successfully"
+            cp annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/master.gff.txt {output.gff}
+        elif [ -f "annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/all.gff" ]; then
+            echo "MetaERG annotation succeeded but output_report.pl failed (known issue)"
+            cp annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/all.gff {output.gff}
         else
             # if it successed but failed at output_report.pl, no need to do anything
             echo "sample likely failed at output_report.pl but gff should be present"
-            mv annotation/annotation_{wildcards.batch}/data/all.gff {output.gff}
+            mv annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/all.gff {output.gff}
         fi
+
+        # Check for FFN file in data directory first, then tmp directory
+        if [ -f "annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/cds.ffn" ]; then
+            cp annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/cds.ffn {output.ffn}
+        elif [ -f "annotation/{wildcards.sample}/annotation_{wildcards.batch}/tmp/cds.ffn" ]; then
+            echo "Copying cds.ffn from tmp directory (output_report.pl failed)"
+            cp annotation/{wildcards.sample}/annotation_{wildcards.batch}/tmp/cds.ffn {output.ffn}
+        else
+            echo "ERROR: cds.ffn not found in data or tmp directory"
+            exit 1
+        fi
+        
+        # Check for FAA file in data directory first, then tmp directory
+        if [ -f "annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/cds.faa" ]; then
+            cp annotation/{wildcards.sample}/annotation_{wildcards.batch}/data/cds.faa {output.faa}
+        elif [ -f "annotation/{wildcards.sample}/annotation_{wildcards.batch}/tmp/cds.faa" ]; then
+            echo "Copying cds.faa from tmp directory (output_report.pl failed)"
+            cp annotation/{wildcards.sample}/annotation_{wildcards.batch}/tmp/cds.faa {output.faa}
+        else
+            echo "ERROR: cds.faa not found in data or tmp directory"
+            exit 1
+        fi
+        
+        echo "Successfully completed annotation for {wildcards.sample}_{wildcards.batch}"
         """
 
+
+def get_batch_gffs(wildcards):
+    """Aggregate all GFF files for a sample after checkpoint completes"""
+    checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
+    batches = glob.glob(f"{checkpoint_output}/stdin.part_*.fasta")
+    batch_names = [os.path.basename(b).replace('.fasta', '') for b in batches]
+    
+    return expand(
+        "annotation/{sample}/annotation_{batch}/data/either_all_or_master.gff",
+        sample=wildcards.sample,
+        batch=batch_names
+    )
+
+
+def get_batch_ffns(wildcards):
+    """Aggregate all FFN files for a sample after checkpoint completes"""
+    checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
+    batches = glob.glob(f"{checkpoint_output}/stdin.part_*.fasta")
+    batch_names = [os.path.basename(b).replace('.fasta', '') for b in batches]
+
+    return expand(
+        "annotation/{sample}/annotation_{batch}/data/cds.ffn",
+        sample=wildcards.sample,
+        batch=batch_names
+    )
+
+
+rule join_metaerg_outputs:
+    input:
+        gff=get_batch_gffs,
+        ffn=get_batch_ffns,
+    output:
+        gff="{sample}_metaerg.gff",
+        ffn="{sample}_metaerg.ffn",
+    container:
+        config["docker_seqkit"]
+    shell:
+        """
+	# deal with header
+        head -n 1 {input.gff[0]} > {output.gff}
+        for f in {input.gff}
+        do
+            tail -n+2 $f >> {output.gff}
+        done
+        for f in {input.ffn}
+        do
+            cat $f >> {output.ffn}
+        done
+        """
 
 rule antismash:
     # note that we don't require the web index as antismash can fail on small samples.
     container:
         config["docker_antismash"]
     input:
-        assembly=config["assembly"],
+        assembly=lambda wc: config["assembly"][wc.sample],
+        #assembly=config["assembly"],
         gff="{sample}_metaerg.gff",
     resources:
         mem_mb=16 * 1024,
@@ -154,7 +288,8 @@ rule tabulate_antismash:
 
 rule annotate_abricate:
     input:
-        assembly=config["assembly"],
+        #assembly=config["assembly"]
+        assembly=lambda wc: config["assembly"][wc.sample],
     output:
         out="{sample}_abricate_{tool}.tab",
     container:
@@ -169,7 +304,8 @@ rule annotate_abricate:
 
 rule annotate_AMR:
     input:
-        assembly=config["assembly"],
+        #assembly=config["assembly"]
+        assembly=lambda wc: config["assembly"][wc.sample],
     output:
         amr="{sample}_amrfinder.tab",
     resources:
@@ -182,43 +318,6 @@ rule annotate_AMR:
         amrfinder -n {input.assembly}  --plus  > {output.amr}
         """
 
-
-rule split_assembly:
-    """
-    These dummy inputs are intended to be overwritten when importing the rule
-    """
-    input:
-        assembly=config["assembly"],
-    output:
-        directory("tmp"),
-        chunks=expand("tmp/{batch}.fasta", batch=BATCHES),
-        assembly=temp("tmp-" + os.path.basename(config["assembly"])),
-    params:
-        outdir="tmp/",
-        nbatches=len(BATCHES),
-        minlen=config["contig_annotation_thresh"],
-    container:
-        "docker://pegi3s/seqkit:2.3.0"
-    threads: 4  # see their docs
-    resources:
-        mem_mb=8000,
-    log:
-        e="logs/split_assembly.e",
-        o="logs/split_assembly.o",
-    shell:
-        """
-        # If you get a weird issue with missing contigs, check if its related to
-        # https://github.com/shenwei356/seqkit/issues/364
-
-        #We have to copy the input here because if we run on isabl samples,
-        # the permissions don't allow the creation of the index file
-        cp {input.assembly} {output.assembly}
-        seqkit shuffle {output.assembly} --two-pass  |
-        seqkit seq --min-len {params.minlen} --threads {threads} | \
-            seqkit split2 --by-part {params.nbatches} --out-dir {params.outdir}  > {log.o} 2>> {log.e}
-        """
-
-
 def get_annotate_cazi_runtime(wildcards, attempt):
     return attempt * 3.5 * 60
 
@@ -227,14 +326,23 @@ def get_annotate_cazi_memory(wildcards, attempt):
     return attempt * 4 * 1024
 
 
+def get_batch_faas(wildcards):
+    """Get all FAA files for CAZI annotation"""
+    checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
+    batches = glob.glob(f"{checkpoint_output}/stdin.part_*.fasta")
+    batch_names = [os.path.basename(b).replace('.fasta', '') for b in batches]
+    return batch_names
+
+
+
 rule annotate_CAZI_split:
     input:
-        faa="annotation/annotation_{batch}/data/cds.faa",
-        gff="annotation/annotation_{batch}/data/either_all_or_master.gff",
+        faa="annotation/{sample}/annotation_{batch}/data/cds.faa",
+        gff="annotation/{sample}/annotation_{batch}/data/either_all_or_master.gff",
     output:
-        overview="cazi_db_scan/{batch}/overview.txt",
-        substrate="cazi_db_scan/{batch}/substrate.out",
-        cgc="cazi_db_scan/{batch}/cgc.out",
+        overview="cazi_db_scan/{sample}/{batch}/overview.txt",
+        substrate="cazi_db_scan/{sample}/{batch}/substrate.out",
+        cgc="cazi_db_scan/{sample}/{batch}/cgc.out",
     params:
         cazi_db=config["cazi_db"],
         contig_annotation_thresh=config["contig_annotation_thresh"],
@@ -254,124 +362,236 @@ rule annotate_CAZI_split:
         touch {output.overview}
         touch {output.substrate}
         touch {output.cgc}
-        run_dbcan {input.faa} protein --out_dir cazi_db_scan/{wildcards.batch}/ -t all --db_dir /app/db -c {input.gff} --cgc_substrate --dia_cpu {threads} --hmm_cpu {threads} --tf_cpu {threads} --stp_cpu {threads} --dbcan_thread {threads} ||  echo "WARNING: no output from this split!"
+        run_dbcan {input.faa} protein --out_dir cazi_db_scan/{wildcards.sample}/{wildcards.batch}/ -t all --db_dir /app/db -c {input.gff} --cgc_substrate --dia_cpu {threads} --hmm_cpu {threads} --tf_cpu {threads} --stp_cpu {threads} --dbcan_thread {threads} ||  echo "WARNING: no output from this split!"
         """
 
 
-rule join_metaerg_outputs:
+#rule join_metaerg_outputs:
+#    input:
+#        gff=lambda wc: expand(
+#            "annotation/{sample}/annotation_{batch}/data/either_all_or_master.gff",
+#            batch=BATCHES, sample=wc.sample),
+#        ffn=lambda wc: expand(
+#            "annotation/{sample}/annotation_{batch}/data/cds.ffn",
+#            batch=BATCHES, sample=wc.sample),
+#    output:
+#        gff="{sample}_metaerg.gff",
+#        ffn="{sample}_metaerg.ffn",
+#    container:
+#        config["docker_seqkit"]
+#    shell:
+#        """
+        # deal with header
+#        head -n 1 {input.gff[0]} > {output.gff}
+#        for f in {input.gff}
+#        do
+#            tail -n+2 $f >> {output.gff}
+#        done
+#        for f in {input.ffn}
+#        do
+#            cat $f >> {output.ffn}
+#        done
+#        """
+
+
+#rule align_annotated_genes:
+#    input:
+#        ffn="annotation/{sample}/annotation_{batch}/data/cds.ffn",
+#        r1=lambda wc: config["R1"][wc.sample],
+#        r2=lambda wc: config["R2"][wc.sample],
+#    output:
+#        bamfile="annotation/{sample}/annotation_{batch}/aligned_reads.bam",
+#    container:
+#        config["docker_bowtie2"]
+#    resources:
+#        mem_mb=16 * 1024,
+#        runtime=get_annotate_cazi_runtime,
+#        threads=16,
+#        cores=16,
+#    params:
+#        bowtie_dir="annotation/{sample}/annotation_{batch}/bowtie",
+#        bowtie_index="annotation/{sample}/annotation_{batch}/bowtie/bowtie2_index",
+#    shell:
+#        """
+#        mkdir -p {params.bowtie_dir}
+#        bowtie2-build \
+#            --threads {resources.threads} \
+#            {input.ffn} \
+#            {params.bowtie_index}
+#        bowtie2 --threads {resources.threads} -1 {input.r1} -2 {input.r2} -x {params.bowtie_index}  | samtools view -@ {resources.threads} -Sb | samtools sort -o {output.bamfile} -@ {resources.threads} 
+#        """
+
+
+#rule seqkit_annotate_ffn:
+#    input:
+#        ffn="annotation/{sample}/annotation_{batch}/data/cds.ffn",
+#    output:
+#        length_file="annotation/{sample}/annotation_{batch}/seqkit.length",
+#        bed_file="annotation/{sample}/annotation_{batch}/seqkit.bed",
+#    container:
+#        config["docker_seqkit"]
+#    shell:
+#        """
+#        seqkit fx2tab -l -n -i {input.ffn} | awk '{{print $1"\t"$2}}' > {output.length_file} 
+#        seqkit fx2tab -l -n -i {input.ffn} | awk '{{print $1"\t"0"\t"$2}}' > {output.bed_file} 
+#        """
+
+
+#rule bedtools_coverage:
+#    input:
+#        length_file="annotation/{sample}/annotation_{batch}/seqkit.length",
+#        bed_file="annotation/{sample}/annotation_{batch}/seqkit.bed",
+#        bamfile="annotation/{sample}/annotation_{batch}/aligned_reads.bam",
+#    output:
+#        coverage="annotation/{sample}/annotation_{batch}/annotated_gene_coverage.txt",
+#    container:
+#        config["docker_bedtools"]
+#    shell:
+#        """
+#        bedtools genomecov -5 -ibam {input.bamfile} > {output.coverage}
+#        """
+
+rule merge_all_genes_for_alignment:
+    """Merge all gene sequences from all batches into one file"""
     input:
-        gff=expand(
-            "annotation/annotation_{batch}/data/either_all_or_master.gff",
-            batch=BATCHES,
-        ),
-        ffn=expand(
-            "annotation/annotation_{batch}/data/cds.ffn",
-            batch=BATCHES,
-        ),
+        ffns=get_batch_ffns,  # All FFN files from all batches
     output:
-        gff=f"{config['sample']}_metaerg.gff",
-        ffn=f"{config['sample']}_metaerg.ffn",
-    container:
-        config["docker_seqkit"]
+        merged="{sample}_all_genes.ffn",
     shell:
         """
-        # deal with header
-        head -n 1 {input.gff[0]} > {output.gff}
-        for f in {input.gff}
-        do
-            tail -n+2 $f >> {output.gff}
-        done
-        for f in {input.ffn}
-        do
-            cat $f >> {output.ffn}
-        done
+        cat {input.ffns} > {output.merged}
         """
 
 
-rule align_annotated_genes:
+rule align_reads_to_all_genes:
+    """Align sequencing reads to all genes at once (not per-batch)"""
     input:
-        ffn="annotation/annotation_{batch}/data/cds.ffn",
-        r1=config["R1"],
-        r2=config["R2"],
+        genes="{sample}_all_genes.ffn",
+        r1=lambda wc: config["R1"][wc.sample],
+        r2=lambda wc: config["R2"][wc.sample],
     output:
-        bamfile="annotation/annotation_{batch}/aligned_reads.bam",
-    container:
-        config["docker_bowtie2"]
+        bam="{sample}_aligned_reads.bam",
+        bai="{sample}_aligned_reads.bam.bai",
+    threads: 16
     resources:
         mem_mb=16 * 1024,
-        runtime=get_annotate_cazi_runtime,
-        threads=16,
-        cores=16,
-    params:
-        bowtie_dir="annotation/annotation_{batch}/bowtie",
-        bowtie_index="annotation/annotation_{batch}/bowtie/bowtie2_index",
-    shell:
-        """
-        mkdir -p {params.bowtie_dir}
-        bowtie2-build \
-            --threads {resources.threads} \
-            {input.ffn} \
-            {params.bowtie_index}
-        bowtie2 --threads {resources.threads} -1 {input.r1} -2 {input.r2} -x {params.bowtie_index}  | samtools view -@ {resources.threads} -Sb | samtools sort -o {output.bamfile} -@ {resources.threads} 
-        """
-
-
-rule seqkit_annotate_ffn:
-    input:
-        ffn="annotation/annotation_{batch}/data/cds.ffn",
-    output:
-        length_file="annotation/annotation_{batch}/seqkit.length",
-        bed_file="annotation/annotation_{batch}/seqkit.bed",
+        runtime=120,  # 2 hours should be enough
     container:
-        config["docker_seqkit"]
+        config["docker_bowtie2"]
+    params:
+        index_prefix="{sample}_genes_index",
     shell:
         """
-        seqkit fx2tab -l -n -i {input.ffn} | awk '{{print $1"\t"$2}}' > {output.length_file} 
-        seqkit fx2tab -l -n -i {input.ffn} | awk '{{print $1"\t"0"\t"$2}}' > {output.bed_file} 
+        # Build bowtie2 index
+        bowtie2-build --threads {threads} {input.genes} {params.index_prefix}
+        
+        # Align reads
+        bowtie2 --threads {threads} \
+            -1 {input.r1} -2 {input.r2} \
+            -x {params.index_prefix} \
+        | samtools view -@ {threads} -Sb \
+        | samtools sort -o {output.bam} -@ {threads}
+        
+        # Index the BAM file
+        samtools index {output.bam}
         """
 
 
-rule bedtools_coverage:
+#rule calculate_gene_coverage:
+#    """Calculate read coverage per gene"""
+#    input:
+#        bam="{sample}_aligned_reads.bam",
+#        bai="{sample}_aligned_reads.bam.bai",
+#        genes="{sample}_all_genes.ffn",
+#    output:
+#        coverage="{sample}_gene_coverage.txt",
+#        bed=temp("{sample}_genes.bed"),
+#    container:
+#        config["docker_seqkit"]  # Needs seqkit + bedtools
+#    shell:
+#        """
+#        # Convert gene FASTA to BED format
+#        seqkit fx2tab -l -n -i {input.genes} \
+#        | awk '{{print $1"\t0\t"$2}}' > {output.bed}
+#        
+#        # Calculate coverage using bedtools
+#        bedtools coverage -a {output.bed} -b {input.bam} > {output.coverage}
+#        """
+rule calculate_gene_coverage:
+    """Calculate per-position read coverage (depth) for each gene"""
     input:
-        length_file="annotation/annotation_{batch}/seqkit.length",
-        bed_file="annotation/annotation_{batch}/seqkit.bed",
-        bamfile="annotation/annotation_{batch}/aligned_reads.bam",
+        bam="{sample}_aligned_reads.bam",
+        bai="{sample}_aligned_reads.bam.bai",
     output:
-        coverage="annotation/annotation_{batch}/annotated_gene_coverage.txt",
+        coverage="{sample}_gene_coverage.txt",
     container:
         config["docker_bedtools"]
     shell:
         """
-        bedtools genomecov -5 -ibam {input.bamfile} > {output.coverage}
+        # Generate per-position depth using bedtools genomecov
+        # -d = output per-base depth
+        # -5 = only count 5' ends of reads (matches your old approach)
+        bedtools genomecov -d -5 -ibam {input.bam} > {output.coverage}
         """
 
 
 rule create_RPM_counts:
     input:
-        coverage="annotation/annotation_{batch}/annotated_gene_coverage.txt",
-        overview="cazi_db_scan/{batch}/overview.txt",
-        substrate="cazi_db_scan/{batch}/substrate.out",
-        cgc="cazi_db_scan/{batch}/cgc.out",
-        r1=config["R1"],
+        #coverage="annotation/{sample}/annotation_{batch}/annotated_gene_coverage.txt",
+        coverage="{sample}_gene_coverage.txt",
+        overview="cazi_db_scan/{sample}/{batch}/overview.txt",
+        substrate="cazi_db_scan/{sample}/{batch}/substrate.out",
+        cgc="cazi_db_scan/{sample}/{batch}/cgc.out",
+        r1=lambda wc: config["R1"][wc.sample]
     output:
-        rpm_file="cazi_db_scan/{batch}/annoted_cazymes_RPM.tsv",
+        rpm_file="cazi_db_scan/{sample}/{batch}/annoted_cazymes_RPM.tsv",
     conda:
         "../envs/annotate_output_parse.yaml"
     script:
         "../scripts/generate_RPM_annotation_files.py"
 
 
+
+def get_cazi_overviews(wildcards):
+    checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
+    batches = glob.glob(f"{checkpoint_output}/stdin.part_*.fasta")
+    batch_names = [os.path.basename(b).replace('.fasta', '') for b in batches]
+    return expand("cazi_db_scan/{sample}/{batch}/overview.txt", sample=wildcards.sample, batch=batch_names)
+
+
+def get_cazi_substrates(wildcards):
+    checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
+    batches = glob.glob(f"{checkpoint_output}/stdin.part_*.fasta")
+    batch_names = [os.path.basename(b).replace('.fasta', '') for b in batches]
+    return expand("cazi_db_scan/{sample}/{batch}/substrate.out", sample=wildcards.sample, batch=batch_names)
+
+
+def get_cazi_cgcs(wildcards):
+    checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
+    batches = glob.glob(f"{checkpoint_output}/stdin.part_*.fasta")
+    batch_names = [os.path.basename(b).replace('.fasta', '') for b in batches]
+    return expand("cazi_db_scan/{sample}/{batch}/cgc.out", sample=wildcards.sample, batch=batch_names)
+
+
+def get_cazi_rpms(wildcards):
+    checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
+    batches = glob.glob(f"{checkpoint_output}/stdin.part_*.fasta")
+    batch_names = [os.path.basename(b).replace('.fasta', '') for b in batches]
+    return expand("cazi_db_scan/{sample}/{batch}/annoted_cazymes_RPM.tsv", sample=wildcards.sample, batch=batch_names)
+
+
+
 rule join_CAZI:
     input:
-        overview=expand("cazi_db_scan/{batch}/overview.txt", batch=BATCHES),
-        substrate=expand("cazi_db_scan/{batch}/substrate.out", batch=BATCHES),
-        cgc=expand("cazi_db_scan/{batch}/cgc.out", batch=BATCHES),
-        rpm=expand("cazi_db_scan/{batch}/annoted_cazymes_RPM.tsv", batch=BATCHES),
+        overview=get_cazi_overviews,
+        substrate=get_cazi_substrates,
+        cgc=get_cazi_cgcs,
+        rpm=get_cazi_rpms,
     output:
-        overview=f"{config['sample']}_cazi_overview.txt",
-        substrate=f"{config['sample']}_cazi_substrate.out",
-        cgc=f"{config['sample']}_cazi_cgc.out",
-        rpm=f"{config['sample']}_annotated_cazymes_RPM.tsv",
+        overview="{sample}_cazi_overview.txt",
+        substrate="{sample}_cazi_substrate.out",
+        cgc="{sample}_cazi_cgc.out",
+        rpm="{sample}_annotated_cazymes_RPM.tsv",
     shell:
         """
         join_files(){{

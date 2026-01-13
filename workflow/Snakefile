@@ -48,8 +48,8 @@ we do this for the assembly because that config entry is referenced many times i
 for entries like R1/R2, its eaiest to set those in the conditional block below, as those are only used by a single rule within a given workflow
 """
 
-if config["stage"] == "all":
-    config["assembly"] = f"megahit_{config['sample']}.assembly.fasta"
+#if config["stage"] == "all":
+#    config["assembly"] = f"megahit_{config['sample']}.assembly.fasta"
 
 config["readdirs"] = get_readdirs()
 
@@ -347,6 +347,15 @@ elif config["stage"] == "biobakery":
     outputs = [
         rules.preprocess_all.input,
         rules.biobakery_all.input,
+    ]
+elif config["stage"] == "assembly":
+    outputs = [
+	rules.preprocess_all.input,
+	rules.assembly_all.input,
+    ]
+elif config["stage"] == "annotate":
+    outputs = [
+        rules.annotate_all.input,
     ]
 else:
     outputs = getattr(rules,f"{config['stage']}_all").input

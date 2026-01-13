@@ -39,7 +39,8 @@ properties:
     uniqueItems: true
   stage:
     type: string
-    pattern: "^(all|biobakery|preprocess|assembly|rgi|kraken|binning|annotate|downsample|hla|classify_bins|qc|sylph)$"
+    pattern: "^(all|biobakery|preprocess|rgi|kraken|binning|annotate|downsample|hla|classify_bins|qc|sylph)$"
+  #removed assembly from top line 
   # run parameters
   nshards:
     type: integer
