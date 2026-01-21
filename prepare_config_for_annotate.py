@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 import yaml
 import glob
@@ -26,11 +25,11 @@ def main(assembly_dir, config_file, output_file):
 
     # Save updated config to a new file
     with open(output_file, 'w') as f:
-        yaml.dump(config, f)
+        yaml.dump(config, f, default_flow_style=False)
 
     print(f"✅ Updated config written to {output_file}")
     print("Assembly section:")
-    print(yaml.dump({'assembly': assembly_mapping}, sort_keys=False))
+    print(yaml.dump({'assembly': assembly_mapping}, default_flow_style=False))
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
@@ -40,6 +39,4 @@ if __name__ == "__main__":
     assembly_dir = sys.argv[1]
     config_file = sys.argv[2]
     output_file = sys.argv[3]
-
     main(assembly_dir, config_file, output_file)
-
