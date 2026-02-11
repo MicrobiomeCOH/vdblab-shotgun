@@ -53,6 +53,9 @@ cleaned_fastqs = expand("hostdepleted/{SAMPLE}_R{read_dir}.fastq.gz",
 
 wildcard_constraints:
     sample="[^/]+",
+    shard="\d+",
+    db="[^/]+\.(fna|fa)\.gz",
+    id="[^/]+",
 
 
 #print("cleaned_fastqs:", cleaned_fastqs)
@@ -431,9 +434,8 @@ rule make_combined_host_reads_fastq:
     """ Get all the host-associated reads and convert back to fastqs
     """
     input:
-        R1=expand(
-            expand(
-                "host/{id}/{{sample}}_shard{{shard}}.{db}.R{{{{readdir}}}}.fq",
+        R1=lambda wildcards: expand(
+                "host/{id}/{sample}_shard{shard}.{db}.R{readdir}.fq",
                 zip,
                 id=["01-bowtie", "02-snap", "04-bowtie", "05-snap"],
                 db=[
@@ -442,9 +444,9 @@ rule make_combined_host_reads_fastq:
                     bowtie2_mouse_db_name,
                     snap_mouse_db_name,
                 ],
-            ),
-            shard=SHARDS,
-            sample=config["sample"],
+             shard=SHARDS,
+             sample=wildcards.sample,
+             readdir=wildcards.readdir,
         ),
     output:
         R1="host/{sample}_all_host_reads_R{readdir}.fastq.gz",
