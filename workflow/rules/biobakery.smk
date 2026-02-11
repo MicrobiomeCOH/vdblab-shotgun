@@ -42,6 +42,9 @@ metaphlan = expand("metaphlan/{SAMPLE}_metaphlan4_profile.txt",SAMPLE=config['sa
 ko_cpm = expand("humann/{SAMPLE}_humann3_KO_cpm.tsv",SAMPLE=config['sample'])
 metaphlan_sam = expand("metaphlan/{SAMPLE}.sam.bz2",SAMPLE=config['sample'])
 krona = expand("reports/{SAMPLE}_metaphlan4_profile.txt.krona.html",SAMPLE=config['sample'])
+pathabun_join_table=expand("humann/humann3_pathabundance_cpm_joined_{SAMPLE}.tsv",SAMPLE=config['sample'])
+ko_cpm_join_table=expand("humann/humann3_KO_cpm_joined_{SAMPLE}.tsv",SAMPLE=config['sample'])
+metaphlan_merged_table="metaphlan/merged_abundance_table.txt"
 
 
 all_inputs = [
@@ -50,6 +53,9 @@ all_inputs = [
     pabun_cpm,
     krona,
     metaphlan_sam,
+    pathabun_join_table,
+    ko_cpm_join_table,
+    metaphlan_merged_table,
 ]
 
 #print( all_inputs)
@@ -64,7 +70,7 @@ rule cat_pair:
     input:
         unpack(get_config_inputs_multisample),
     output:
-        joined=temp("kneaddata/{sample}_knead_cat.fastq.gz"),
+        joined="kneaddata/{sample}_knead_cat.fastq.gz",
     conda:
         "../envs/base.yaml"
     log:
@@ -206,10 +212,10 @@ rule renormalize_KO:
 # Join humann output per sample into one table
 rule join_table:
     input:
-        res_dir="humann",
+        res_dir="humann/",
     output:
         pathabun="humann/humann3_pathabundance_cpm_joined_{sample}.tsv",
-        ko_cpm="humann3_KO_cpm_joined_{sample}.tsv",
+        ko_cpm="humann/humann3_KO_cpm_joined_{sample}.tsv",
     container:
         config["docker_biobakery"]
     conda:
@@ -300,6 +306,26 @@ rule metaphlan_run:
             -t rel_ab_w_read_stats \
             -o {output.outfile} \
             2> {log.e}
+        """
+
+
+rule merge_metaphlan_table:
+   input:
+        infile=expand("metaphlan/{sample}_metaphlan4_profile.txt", sample=config["sample"]),
+   output:
+        outfile="metaphlan/merged_abundance_table.txt",
+   container:
+        config["docker_biobakery"]
+   conda:
+        "../envs/metaphlan.yaml"
+   resources:
+        mem_mb=1 * 1024,
+   threads: 2
+   log:
+        e="logs/metaphlan_merge_table.e",
+   shell:
+        """
+        merge_metaphlan_tables.py {input.infile} > {output.outfile}
         """
 
 
