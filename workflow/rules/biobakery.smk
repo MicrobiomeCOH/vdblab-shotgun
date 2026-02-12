@@ -42,8 +42,11 @@ metaphlan = expand("metaphlan/{SAMPLE}_metaphlan4_profile.txt",SAMPLE=config['sa
 ko_cpm = expand("humann/{SAMPLE}_humann3_KO_cpm.tsv",SAMPLE=config['sample'])
 metaphlan_sam = expand("metaphlan/{SAMPLE}.sam.bz2",SAMPLE=config['sample'])
 krona = expand("reports/{SAMPLE}_metaphlan4_profile.txt.krona.html",SAMPLE=config['sample'])
-pathabun_join_table=expand("humann/humann3_pathabundance_cpm_joined_{SAMPLE}.tsv",SAMPLE=config['sample'])
-ko_cpm_join_table=expand("humann/humann3_KO_cpm_joined_{SAMPLE}.tsv",SAMPLE=config['sample'])
+pathabun_cpm_join_table="humann/humann3_pathabundance_cpm_joined.tsv" #,SAMPLE=config['sample'])
+ko_cpm_join_table="humann/humann3_KO_cpm_joined.tsv" #,SAMPLE=config['sample'])
+pathabun_join_table="humann/humann3_pathabundance_joined.tsv",
+ko_join_table="humann/humann3_KO_joined.tsv",
+genefamilies_join_table="humann/humann3_genefamilies_joined.tsv"
 metaphlan_merged_table="metaphlan/merged_abundance_table.txt"
 
 
@@ -53,8 +56,11 @@ all_inputs = [
     pabun_cpm,
     krona,
     metaphlan_sam,
-    pathabun_join_table,
+    pathabun_cpm_join_table,
     ko_cpm_join_table,
+    pathabun_join_table,
+    ko_join_table,
+    genefamilies_join_table,
     metaphlan_merged_table,
 ]
 
@@ -214,28 +220,53 @@ rule join_table:
     input:
         res_dir="humann/",
     output:
-        pathabun="humann/humann3_pathabundance_cpm_joined_{sample}.tsv",
-        ko_cpm="humann/humann3_KO_cpm_joined_{sample}.tsv",
+        pathabun_cpm="humann/humann3_pathabundance_cpm_joined.tsv",
+        ko_cpm="humann/humann3_KO_cpm_joined.tsv",
+        pathabun="humann/humann3_pathabundance_joined.tsv",
+        ko="humann/humann3_KO_joined.tsv",
+        genefamilies="humann/humann3_genefamilies_joined.tsv",
     container:
         config["docker_biobakery"]
     conda:
         "../envs/humann.yaml"
     log:
-        e="logs/join_table_{sample}.e",
+        e1="logs/join_pathabun_cpm_table.e",
+        e2="logs/join_KO_cpm_table.e",
+        e3="logs/join_pathabun_table.e",
+        e4="logs/join_KO_table.e",
+        e5="logs/join_genefamilies_table.e",
     shell:
         """
         humann_join_tables \
             -s \
             --input {input.res_dir} \
             --file_name humann3_pathabundance_cpm \
-            --output {output.pathabun} \
-            2> {log.e}
+            --output {output.pathabun_cpm} \
+            2> {log.e1}
         humann_join_tables \
             -s \
             --input {input.res_dir} \
             --file_name humann3_KO_cpm \
             --output {output.ko_cpm} \
-            2>> {log.e}
+            2>> {log.e2}
+        humann_join_tables \
+            -s \
+            --input {input.res_dir} \
+            --file_name humann3_pathabundance.tsv \
+            --output {output.pathabun} \
+            2>> {log.e3}
+        humann_join_tables \
+            -s \
+            --input {input.res_dir} \
+            --file_name humann3_KO.tsv \
+            --output {output.ko} \
+            2>> {log.e4}
+        humann_join_tables \
+            -s \
+            --input {input.res_dir} \
+            --file_name humann3_genefamilies \
+            --output {output.genefamilies} \
+            2>> {log.e5}
         """
 
 
