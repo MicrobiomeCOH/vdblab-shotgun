@@ -218,13 +218,19 @@ rule renormalize_KO:
 # Join humann output per sample into one table
 rule join_table:
     input:
-        res_dir="humann/",
+        pathabun_cpm=expand("humann/{SAMPLE}_humann3_pathabundance_cpm.tsv", SAMPLE=config['sample']),
+        ko_cpm=expand("humann/{SAMPLE}_humann3_KO_cpm.tsv", SAMPLE=config['sample']),
+        pathabun=expand("humann/{SAMPLE}_humann3_pathabundance.tsv", SAMPLE=config['sample']),
+        ko=expand("humann/{SAMPLE}_humann3_KO.tsv", SAMPLE=config['sample']),
+        genefamilies=expand("humann/{SAMPLE}_humann3_genefamilies.tsv", SAMPLE=config['sample']),
     output:
         pathabun_cpm="humann/humann3_pathabundance_cpm_joined.tsv",
         ko_cpm="humann/humann3_KO_cpm_joined.tsv",
         pathabun="humann/humann3_pathabundance_joined.tsv",
         ko="humann/humann3_KO_joined.tsv",
         genefamilies="humann/humann3_genefamilies_joined.tsv",
+    params:
+        res_dir="humann/",
     container:
         config["docker_biobakery"]
     conda:
@@ -239,31 +245,31 @@ rule join_table:
         """
         humann_join_tables \
             -s \
-            --input {input.res_dir} \
+            --input {params.res_dir} \
             --file_name humann3_pathabundance_cpm \
             --output {output.pathabun_cpm} \
             2> {log.e1}
         humann_join_tables \
             -s \
-            --input {input.res_dir} \
+            --input {params.res_dir} \
             --file_name humann3_KO_cpm \
             --output {output.ko_cpm} \
             2>> {log.e2}
         humann_join_tables \
             -s \
-            --input {input.res_dir} \
+            --input {params.res_dir} \
             --file_name humann3_pathabundance.tsv \
             --output {output.pathabun} \
             2>> {log.e3}
         humann_join_tables \
             -s \
-            --input {input.res_dir} \
+            --input {params.res_dir} \
             --file_name humann3_KO.tsv \
             --output {output.ko} \
             2>> {log.e4}
         humann_join_tables \
             -s \
-            --input {input.res_dir} \
+            --input {params.res_dir} \
             --file_name humann3_genefamilies \
             --output {output.genefamilies} \
             2>> {log.e5}
