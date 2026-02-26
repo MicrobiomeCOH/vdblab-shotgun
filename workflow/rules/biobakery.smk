@@ -76,7 +76,7 @@ rule cat_pair:
     input:
         unpack(get_config_inputs_multisample),
     output:
-        joined="kneaddata/{sample}_knead_cat.fastq.gz",
+        joined=temp("kneaddata/{sample}_knead_cat.fastq.gz"),
     conda:
         "../envs/base.yaml"
     log:

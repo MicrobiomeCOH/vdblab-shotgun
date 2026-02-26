@@ -204,13 +204,11 @@ use rule split_fastq from utils as utils_split_fastq with:
     input:
         unpack(files_to_split),
     output:
-        reads=temp(
-            expand(
+        reads=expand(
                 "split_fastq/{{sample}}_R{readdir}.part_{shard}.fastq.gz",
                 shard=SHARDS,
                 readdir=config["readdirs"],
-            )
-        ),
+            ),
     log:
         e="logs/split_fastq_{sample}.e",
         o="logs/split_fastq_{sample}.o",

@@ -355,6 +355,7 @@ elif config["stage"] == "assembly":
     ]
 elif config["stage"] == "annotate":
     outputs = [
+        rules.binning_all.input,
         rules.annotate_all.input,
     ]
 else:

@@ -44,15 +44,22 @@ refined_binstats_each = expand(
     sample=config["sample"],
     tool=BINNING_TOOLS,
 )
-refined_stats = f'metawrap/refined_binning_{config["sample"]}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats'
-stats_mqc = (
-    f'metawrap/refined_binning_{config["sample"]}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats_mqc.tsv',
+refined_stats = expand(
+     f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
+     sample=config["sample"]
 )
-contigs = (
-    f'metawrap/refined_binning_{config["sample"]}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.contigs',
+stats_mqc = expand(
+    f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats_mqc.tsv',
+    sample=config["sample"]
 )
-covermreports = f'coverm/{config["sample"]}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv'
-
+contigs = expand(
+    f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.contigs',
+    sample=config["sample"]
+)
+covermreports = expand(
+    f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv',
+    sample=config["sample"]
+)
 
 rule all:
     input:
@@ -66,8 +73,8 @@ rule all:
 
 rule unzip_rename_fastq_for_metawrap:
     input:
-        R1=config["R1"],
-        R2=config["R2"],
+        R1=lambda wc: config["R1"][wc.sample],
+        R2=lambda wc: config["R2"][wc.sample],
     output:
         R1=temp("tmp_{sample}_1.fastq"),
         R2=temp("tmp_{sample}_2.fastq"),
@@ -84,7 +91,7 @@ rule metawrap_binning:
     input:
         R1="tmp_{sample}_1.fastq",
         R2="tmp_{sample}_2.fastq",
-        assembly=config["assembly"],
+        assembly=lambda wc: config["assembly"][wc.sample],
     output:
         stats="metawrap/rawbinning_{sample}/{tool}/{tool}_bins/{tool}.done",
     params:
@@ -97,6 +104,8 @@ rule metawrap_binning:
         runtime=12 * 60,
     shell:
         """
+        echo "tool is: '{wildcards.tool}'"
+        echo "outdir is: '{params.outdir}'"
         metawrap binning -o {params.outdir} -t {threads} -a {input.assembly} --{wildcards.tool} {input.R1} {input.R2}
         touch {output.stats}
         """
@@ -137,6 +146,12 @@ rule metawrap_refine_binning:
         echo -e "#id: 'metawrap'\n#plot_type: 'table'\n#section_name: 'Bin Refinement'" > {output.stats}_mqc.tsv && cat {output.stats} >> {output.stats}_mqc.tsv
         """
 
+def get_fastqs(config_entry):
+    """Always returns a list regardless of whether config value is a string or list"""
+    if isinstance(config_entry, str):
+        return [config_entry]
+    return config_entry
+
 
 rule coverm:
     """ This calculates bin coverage.  The bin stats file is used as the
@@ -154,22 +169,21 @@ rule coverm:
      --genome-fasta-extension is fa since thats how metawrap outputs it
     """
     input:
-        R1=config["R1"],
-        R2=config["R2"],
+        R1=lambda wc: config["R1"][wc.sample],
+        R2=lambda wc: config["R2"][wc.sample],
         stats=f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
     output:
         mqc=f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv',
         bams=directory(
-            f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bams/'
-        ),
+            f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bams/'),
     params:
         bindir=lambda wc, input: input.stats.replace(".stats", ""),
-        fastq_string=lambda wc, input: " ".join(
-            [
-                config["R1"][x] + " " + config["R2"][x]
-                for x in range(0, len(config["R1"]))
-            ]
-        ),
+        fastq_string=lambda wc: " ".join(
+              [r1 + " " + r2
+                for r1, r2 in zip(
+                   get_fastqs(config["R1"][wc.sample]),
+                   get_fastqs(config["R2"][wc.sample]),
+                )]),
     container:
         config["docker_coverm"]
     threads: 16

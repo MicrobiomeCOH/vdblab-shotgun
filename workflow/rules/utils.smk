@@ -24,13 +24,16 @@ rule split_fastq:
         o="logs/split_fastq.o",
     shell:
         """
+        tmpdir=$(mktemp -d)
         seqkit split2 \
             --threads {threads} \
             {params.inputstring} \
             --by-part {params.nshards} \
             --force \
-            --out-dir {params.outdir}/ \
+            --out-dir $tmpdir/ \
             > {log.o} 2>> {log.e}
+        mv $tmpdir/* {params.outdir}/    
+        rm -rf $tmpdir
         """
 
 
