@@ -32,7 +32,6 @@ localrules:
     all,
 
 BINNING_TOOLS = ["concoct", "metabat2", "maxbin2"]
-#SAMPLES=config["sample"]
 
 binstats = expand(
     "metawrap/rawbinning_{sample}/{tool}/{tool}_bins/{tool}.done",
@@ -60,8 +59,8 @@ covermreports = expand(
     f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv',
     sample=config["sample"])
 
-gtdbk=expand("gtdbtk/{sample}/", sample=config["sample"])
-prokka=expand("prokka/{sample}.done", sample=config["sample"])
+gtdbk_bac="gtdbtk/classify/gtdbtk.bac120.summary.tsv"
+gtdbk_arc="gtdbtk/classify/gtdbtk.ar53.summary.tsv"
 
 rule all:
     input:
@@ -71,8 +70,8 @@ rule all:
         stats_mqc,
         contigs,
         covermreports,
-        gtdbk,
-        prokka
+        gtdbk_bac,
+        gtdbk_arc
 
 
 rule unzip_rename_fastq_for_metawrap:
@@ -209,164 +208,118 @@ rule coverm:
         """
 
 
+#SAMPLES = list(config["assembly"].keys())
 
-def get_prokka_bins(wildcards):
-    bin_dir = "metawrap/refined_binning_{}/metawrap_{}_{}_{}/".format(
-        config['sample'],
-        config["metawrap_compl_thresh"],
-        config["metawrap_contam_thresh"],
-        "bins"
-    )
-    bins = glob_wildcards(bin_dir + "{bin}.fa").bin
-    return expand("prokka/{sample}/{bin}/",
-                  sample=config['sample'],
-                  bin=bins)
+#rule all:
+#    input:
+#        "results/gtdbtk/classify/gtdbtk.bac120.summary.tsv",
+#        "results/gtdbtk/classify/gtdbtk.ar53.summary.tsv",
 
 
-def mag_dir(sample):
-    return (
-        f"metawrap/refined_binning_{sample}/"
-        f"metawrap_{config['metawrap_compl_thresh']}_"
-        f"{config['metawrap_contam_thresh']}_bins"
-    )
-
-def get_mag_bins(wildcards):
-    """Dynamically get all bin .fa files for a sample after refinement."""
-    d = mag_dir(wildcards.sample)
-    return sorted(Path(d).glob("*.fa"))
-
-def get_prokka_outputs(wildcards):
-    """Get all expected Prokka output dirs for a sample."""
-    d = mag_dir(wildcards.sample)
-    bins = [f.stem for f in sorted(Path(d).glob("*.fa"))]
-    return expand(
-        "prokka/{sample}/{bin}/",
-        sample=wildcards.sample,
-        bin=bins,
-    )
+#rule stage_assemblies:
+#    input:
+#        [config["assembly"][s][0] for s in SAMPLES]
+#    output:
+#        directory("gtdbtk/input")
+#    run:
+#        import os, pathlib
+#        pathlib.Path(output[0]).mkdir(parents=True, exist_ok=True)
+#        for src in input:
+#            dst = os.path.join(output[0], os.path.basename(src))
+#            if not os.path.lexists(dst):
+#                os.symlink(os.path.abspath(src), dst)
 
 
 #rule gtdbtk_classify_wf:
-#    """
-#    Taxonomic classification of MAGs using GTDB-Tk.
-#    Input: refined MAG bins from MetaWRAP
-#    Output: taxonomic classification results per sample
-#    """
 #    input:
-#        bins = expand("metawrap/refined_binning_{{sample}}/metawrap_" + str(config['metawrap_compl_thresh'])+ "_" + str(config['metawrap_contam_thresh']) + "_bins/bin.{i}.fa", 
-#                       sample=config['sample'],
-#                       i=range(1,6)), 
+#        genome_dir = rules.stage_assemblies.output[0],
 #    output:
-#        directory("gtdbtk/{sample}/")
+#        bac_summary = "gtdbtk/classify/gtdbtk.bac120.summary.tsv",
+#        arc_summary  = "gtdbtk/classify/gtdbtk.ar53.summary.tsv",
 #    params:
-#        extension     = "fa",
+#        out_dir     = "gtdbtk",
 #        db_path     = config["gtdb_db"],
-#        #mash_db     = addition to fast things up
-#    threads: 16
+#        extension   = "fasta",
+#        min_perc_aa = config.get("min_perc_aa", 10),
+#        mash_db     = "gtdbtk/mash",
+#    threads: config.get("cpus_gtdbtk", 32)
 #    resources:
 #        mem_mb  = 200 * 1024, #200 GB
 #        runtime = 4 * 60,
-#    container: 
-#        config["docker_gtdbtk"]
-#    log: "logs/gtdbtk/{sample}.log"
+#    conda: "envs/gtdbtk.yaml"
+#    log: "logs/gtdbtk_classify_wf.log"
 #    shell:
 #        """
 #        export GTDBTK_DATA_PATH={params.db_path}
-#        gtdbtk classify_wf --genome_dir {input.bins} --out_dir {output} --extension {params.extension} --cpus {threads} 2>&1 | tee {log}
+
+#        gtdbtk classify_wf \
+#            --genome_dir  {input.genome_dir} \
+#            --out_dir     {params.out_dir}   \
+#            --extension   {params.extension} \
+#            --cpus        {threads}          \
+#            --min_perc_aa {params.min_perc_aa} \
+#            --mash_db     {params.mash_db}   \
+#            2>&1 | tee {log}
 #        """
 
 
-#rule prokka:
+#rule dram_annotate:
+#    """Annotate all assemblies with DRAM."""
 #    input:
-#        bins = expand("metawrap/refined_binning_{{sample}}/metawrap_" + str(config['metawrap_compl_thresh'])+ "_" + str(config['metawrap_contam_thresh']) + "_bins/bin.{i}.fa",
-#                       sample=config['sample'],
-#                       i=range(1,6)),
+#        genome_dir  = rules.stage_assemblies.output[0],
+#        gtdbtk_bac  = "gtdbtk/classify/gtdbtk.bac120.summary.tsv",
+#        gtdbtk_arc  = "gtdbtk/classify/gtdbtk.ar53.summary.tsv",
 #    output:
-#        directory("output_folder/prokka/{{sample}}/{bin}/")
+#        annotations = "dram/annotations/annotations.tsv",
+#        genes_faa   = "dram/annotations/genes.faa",
+#        genes_gff   = "dram/annotations/genes.gff",
+#        rrna        = "dram/annotations/rrnas.tsv",
+#        trna        = "dram/annotations/trnas.tsv",
 #    params:
-#        prefix = "{bin}",
-#        mincontiglen=500,
-#    threads: 8
+#        out_dir          = "dram/annotations",
+#        min_contig_size  = 2500,
+#        prodigal_mode    = "meta",
+#    threads: 12
 #    resources:
-#        mem_mb  = 200 * 1024, #200 GB
-#        runtime = 4 * 60,
-#    container:
-#        config["docker_prokka"]
-#    log: "logs/prokka/{sample}.log"
+#        mem_mb  = 128 * 1024,   # 128 GB without uniref
+#        runtime = 24 * 60,      # 24 hours
+#    conda: "envs/dram.yaml"
+#    log: "logs/dram_annotate.log"
 #    shell:
 #        """
-#        prokka --outdir {output} --prefix {params.prefix} --mincontiglen {params.mincontiglen} --cpus {threads} --force {input.bins} 2>&1 | tee {log}
+#        DRAM.py annotate \
+#            -i '{params.out_dir}/*.fasta'     \
+#            -o {params.out_dir}               \
+#            --gtdb_taxonomy {input.gtdbtk_bac} \
+#            --gtdb_taxonomy {input.gtdbtk_arc} \
+#            --min_contig_size {params.min_contig_size} \
+#            --prodigal_mode   {params.prodigal_mode}   \
+#            --threads         {threads}                \
+#            --low_mem_mode                             \
+#            2>&1 | tee {log}
 #        """
- 
-rule gtdbtk_classify_wf:
-    """
-    Taxonomic classification of MAGs using GTDB-Tk.
-    Input: refined MAG bins directory from MetaWRAP.
-    Output: taxonomic classification results per sample.
-    """
-    input:
-        #triggering 
-        stats = f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
-    output:
-        directory("gtdbtk/{sample}/")
-    params:
-        bins_dir  = lambda wc: mag_dir(wc.sample),
-        extension = "fa",
-        db_path   = config["gtdb_db"],
-        #mash_db   = config["gtdb_mash_db"],
-    threads: 16
-    resources:
-        mem_mb  = 200 * 1024,
-        runtime = 4 * 60,
-    container:
-        config["docker_gtdbtk"]
-    log:
-        "logs/gtdbtk/{sample}.log"
-    shell:
-        """
-        export GTDBTK_DATA_PATH={params.db_path}
-        gtdbtk classify_wf \
-            --genome_dir {params.bins_dir} \
-            --out_dir    {output}          \
-            --extension  {params.extension} \
-            --skip_ani_screen \
-            --cpus       {threads}         \
-            2>&1 | tee {log}
-        """
 
 
-rule prokka:
-    """
-    Functional annotation of a single MAG using Prokka.
-    {sample} and {bin} wildcards — Snakemake runs this once per bin per sample.
-    """
-    input:
-        bin = lambda wc: f"{mag_dir(wc.sample)}/{wc.bin}.fa",
-    output:
-        directory("prokka/{sample}/{bin}/")
-    params:
-        prefix       = "{bin}",
-        mincontiglen = 500,
-    threads: 8
-    resources:
-        mem_mb  = 16 * 1024,  # prokka is lightweight
-        runtime = 2 * 60,
-    container:
-        config["docker_prokka"]
-    log:
-        "logs/prokka/{sample}/{bin}.log"
-    shell:
-        """
-        prokka --outdir {output} --prefix {params.prefix} --metagenome --mincontiglen {params.mincontiglen} --cpus {threads} --force {input.bin} 2>&1 | tee {log}
-        """
-
-
-rule prokka_all_bins:
-    """Aggregate all per-bin Prokka runs for a sample into a single done flag."""
-    input:
-        get_prokka_outputs
-    output:
-        touch("prokka/{sample}.done")
-
-
-
+#rule dram_distill:
+#    """Distill DRAM annotations into metabolic summaries."""
+#    input:
+#        annotations = "dram/annotations/annotations.tsv",
+#        rrna        = "dram/annotations/rrnas.tsv",
+#        trna        = "dram/annotations/trnas.tsv",
+#    output:
+#        product     = "dram/distill/product.html",
+#        metabolism  = "dram/distill/metabolism_summary.xlsx",
+#        stats       = "dram/distill/genome_stats.tsv",
+#    params:
+#        out_dir = "dram/distill",
+#    conda: "envs/dram.yaml"
+#    log: "logs/dram_distill.log"
+#    shell:
+#        """
+#        DRAM.py distill \
+#            -i {input.annotations}    \
+#            -o {params.out_dir}       \
+#            --rrna_path {input.rrna}  \
+#            --trna_path {input.trna}  \
+#            2>&1 | tee {log}
+#        """

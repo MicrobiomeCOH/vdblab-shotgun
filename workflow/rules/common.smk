@@ -74,12 +74,19 @@ def get_concat_input_multisample(wc):
 #    return res
 
 
+#def files_to_split_for_dedup(wildcards):
+#    res = {}
+#    res["R1"] = f"concatenated/{wildcards.sample}_R1.fastq.gz"
+#    if is_paired():
+#        res["R2"] = f"concatenated/{wildcards.sample}_R2.fastq.gz"
+#    return res
+
+
 def files_to_split(wildcards):
     res = {}
-    base = "dedup" if not skip_dedup() else "concatenated"
-    res["R1"] = f"{base}/{wildcards.sample}_R1.fastq.gz"
+    res["R1"] = f"concatenated/{wildcards.sample}_R1.fastq.gz"
     if is_paired():
-        res["R2"] = f"{base}/{wildcards.sample}_R2.fastq.gz"
+        res["R2"] = f"concatenated/{wildcards.sample}_R2.fastq.gz"
     return res
 
 

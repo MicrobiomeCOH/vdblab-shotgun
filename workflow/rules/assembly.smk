@@ -16,7 +16,7 @@ envvars:
     "TMPDIR",
 
 SHARDS = make_shard_names(config["nshards"])
-
+#TMPDIR = Path(os.environ["TMPDIR"])
 
 localrules:
     all,
@@ -125,14 +125,14 @@ rule megahit:
         )
     shell:
         """
-        mkdir -p ${{TMPDIR}}/megahit_{wildcards.sample}/
+        mkdir -p tmp/megahit_{wildcards.sample}/
         megahit {params.input_string} \
             --out-dir megahit_{wildcards.sample}/ \
             --out-prefix {wildcards.sample} \
-            --tmp-dir ${{TMPDIR}}/megahit_{wildcards.sample}/ \
+            --tmp-dir tmp/megahit_{wildcards.sample}/ \
             --memory $((64000 * 1024)) \
             --num-cpu-threads {threads}
-        rm -r ${{TMPDIR}}/megahit_{wildcards.sample}/
+        rm -r tmp/megahit_{wildcards.sample}/
         mv megahit_{wildcards.sample}/{wildcards.sample}.contigs.fa {output.assembly}
         """
 

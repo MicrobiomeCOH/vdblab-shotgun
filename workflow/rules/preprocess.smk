@@ -65,6 +65,8 @@ rule all:
         clean_fastqs=cleaned_fastqs,
         fastqcs_mqc=expand("reports/{SAMPLE}_R{rd}_fastqc.html", SAMPLE=config['sample'], rd=config["readdirs"]),
 	hostdeplete_stats_mqc=expand("reports/{SAMPLE}_hostdeplete.stats.summary_mqc.tsv",SAMPLE=config['sample']),
+        dedup_stats=expand("reports/{SAMPLE}_dedup.stats",SAMPLE=config['sample']),
+        dedup_merged=expand("dedup/{SAMPLE}_R{rd}.fastq.gz",SAMPLE=config['sample'],rd=config["readdirs"]),
 	sortmerna_blast=expand("sortmerna/{SAMPLE}_sortmerna.blast.gz",SAMPLE=config['sample']),
 	host_reads=expand("host/{SAMPLE}_all_host_reads_R{rd}.fastq.gz",SAMPLE=config['sample'],rd=config["readdirs"]),
 
@@ -132,12 +134,35 @@ rule initial_fastqc_run:
         """
 
 
+use rule split_fastq from utils as utils_split_fastq with:
+    input:
+         unpack(files_to_split),
+    output:
+        reads=expand(
+                "split_fastq/{{sample}}_R{readdir}.part_{shard}.fastq.gz",
+                shard=SHARDS,
+                readdir=config["readdirs"],
+            ),
+    log:
+        e="logs/split_fastq_{sample}.e",
+        o="logs/split_fastq_{sample}.o",
+    params:
+        outdir=lambda wc, output: os.path.dirname(output.reads[0]),
+        inputstring=lambda wc, input: (
+            f"--read1 {input['R1']} --read2 {input['R2']}"
+            if is_paired()
+            else f"--read1 {input['R1']}"
+        ),
+        nshards=config["nshards"],
+
+
+
 rule bbmap_dedup:
     input:
-        reads=expand("concatenated/{{sample}}_R{rd}.fastq.gz", rd=config["readdirs"]),
+        reads=expand("split_fastq/{{sample}}_R{rd}.part_{{shard}}.fastq.gz", rd=config["readdirs"], shard=SHARDS),
     output:
-        reads=temp(expand("dedup/{{sample}}_R{rd}.fastq.gz", rd=config["readdirs"])),
-        dedup_stats="reports/{sample}_dedup.stats",
+        reads=temp(expand("dedup/{{sample}}_R{rd}.part_{{shard}}.fastq.gz", rd=config["readdirs"], shard=SHARDS)),
+        dedup_stats="dedup/{sample}.part_{shard}_dedup.stats.tmp",
     params:
         allowed_subs=3,
         flags=lambda wc: bbmap_dedup_params_flags(wc, config),
@@ -160,7 +185,7 @@ rule bbmap_dedup:
         # this is annoying but we want to be able to extract the stats from
         # the logs, which we can't do without the logs as a file. Perhaps
         # tee-ing would work, if you can do it with stderr
-        "logs/bbmap_dedup_{sample}.log",
+        "logs/bbmap_dedup_{sample}.part_{shard}.log",
     container:
         config["docker_bbtools"]
     conda:
@@ -197,29 +222,8 @@ rule bbmap_dedup:
             exit 1
           fi
         fi
-        """
+        """        
 
-
-use rule split_fastq from utils as utils_split_fastq with:
-    input:
-        unpack(files_to_split),
-    output:
-        reads=expand(
-                "split_fastq/{{sample}}_R{readdir}.part_{shard}.fastq.gz",
-                shard=SHARDS,
-                readdir=config["readdirs"],
-            ),
-    log:
-        e="logs/split_fastq_{sample}.e",
-        o="logs/split_fastq_{sample}.o",
-    params:
-        outdir=lambda wc, output: os.path.dirname(output.reads[0]),
-        inputstring=lambda wc, input: (
-            f"--read1 {input['R1']} --read2 {input['R2']}"
-            if is_paired()
-            else f"--read1 {input['R1']}"
-        ),
-        nshards=config["nshards"],
 
 
 # Trim adapters with BBMap
@@ -379,6 +383,58 @@ rule merge_shards:
         """
         cat {input.R1} | pigz -p {threads} -9 > {output.R1} 2> {log.e}
         """
+
+
+
+rule cat_dedup_stats:
+    input:
+        table=[
+            f"dedup/{{sample}}.part_{shard}_dedup.stats.tmp"
+            for shard in SHARDS
+        ],
+    output:
+        table="reports/{sample}_dedup.stats",
+    shell:
+        """
+        head -n 1 {input.table[0]} > {output.table}
+        awk -F'\t' '
+          FNR==1 {{next}}
+          /Reads In/         {{a += $2}}
+          /Clumps Formed/    {{b += $2}}
+          /Duplicates Found/ {{c += $2}}
+          /Reads Out/        {{d += $2}}
+          /Bases Out/        {{e += $2}}
+        END {{
+          print "Reads In\t" a
+          print "Clumps Formed\t" b
+          print "Duplicates Found\t" c
+          print "Reads Out\t" d
+          print "Bases Out\t" e
+          }}'  {input.table} >> {output.table}
+        """
+
+
+rule merge_dedup_shards:
+    input:
+        reads= lambda wc: expand(
+            "dedup/{sample}_R{rd}.part_{shard}.fastq.gz",
+            sample=wc.sample,
+            rd=wc.rd,
+            shard=SHARDS,
+        ),
+    output:
+        reads="dedup/{sample}_R{rd}.fastq.gz",
+    container:
+        config["docker_cutadapt"]
+    threads: 16
+    log:
+        e="logs/merge_dedup_shards_{sample}_R{rd}.e",
+    shell:
+        """
+        zcat {input.reads} | pigz -p {threads} -9 > {output.reads} 2> {log.e}
+        """
+
+
 
 
 rule aligned_host_reads_to_fastq:
