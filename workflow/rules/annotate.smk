@@ -22,10 +22,6 @@ if not os.path.exists("logs"):
     os.makedirs("logs")
 
 
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
-
 def count_contigs_with_minlen(fasta_path, minlen):
     n = 0
     length = 0
@@ -46,6 +42,8 @@ def count_contigs_with_minlen(fasta_path, minlen):
 
 def calculate_nbatches(assembly_path, minlen, nseqs, max_batches=20):
     """Calculate number of batches needed for splitting assembly"""
+    if not os.path.exists(assembly_path):
+        raise ValueError(f"Assembly not found: {assembly_path}")
     n_filtered = count_contigs_with_minlen(assembly_path, minlen)
     if n_filtered <= 0:
         nbatches = 1
@@ -55,10 +53,6 @@ def calculate_nbatches(assembly_path, minlen, nseqs, max_batches=20):
     return nbatches
 
 
-# ---------------------------------------------------------------------------
-# FIX 3: Single helper to avoid repeating the checkpoint glob pattern
-# ---------------------------------------------------------------------------
-
 def get_batches(wildcards):
     """Return batch name list for a sample after checkpoint completes."""
     checkpoint_output = checkpoints.split_assembly.get(**wildcards).output.splitdir
@@ -66,14 +60,10 @@ def get_batches(wildcards):
     return sorted([os.path.basename(b).replace(".fasta", "") for b in batches])
 
 
-# ---------------------------------------------------------------------------
-# Sample + output setup
-# ---------------------------------------------------------------------------
-
 SAMPLES = config["sample"] if isinstance(config["sample"], list) else [config["sample"]]
 
 abricates = expand(
-    "{sample}_abricate_{tool}.tab",
+    "{sample}/abricate/{tool}.tab",
     sample=SAMPLES,
     tool=[
         "argannot",
@@ -89,29 +79,23 @@ abricates = expand(
 )
 
 outputs = (
-    expand("{sample}_antismash.gbk", sample=SAMPLES)
-    + expand("{sample}_antismash.tab", sample=SAMPLES)
-    + expand("{sample}_amrfinder.tab", sample=SAMPLES)
-    + expand("{sample}_cazi_overview.txt", sample=SAMPLES)
-    + expand("{sample}_cazi_substrate.out", sample=SAMPLES)
-    + expand("{sample}_annotated_cazymes_RPM.tsv", sample=SAMPLES)
+    expand("{sample}/antismash/{sample}_antismash.gbk", sample=SAMPLES)
+    + expand("{sample}/antismash/{sample}_antismash.tab", sample=SAMPLES)
+    + expand("{sample}/amrfinder/{sample}_amrfinder.tab", sample=SAMPLES)
+    + expand("{sample}/cazi/{sample}_cazi_overview.txt", sample=SAMPLES)
+    + expand("{sample}/cazi/{sample}_cazi_substrate.out", sample=SAMPLES)
+    + expand("{sample}/cazi/{sample}_annotated_cazymes_RPM.tsv", sample=SAMPLES)
     + abricates
 )
 
-# FIX 8: metaerg.gff is always produced internally (antismash needs it),
-# but only exposed as a final output when check_contigs is True.
 if config.get("check_contigs", False):
-    outputs += expand("{sample}_metaerg.gff", sample=SAMPLES)
+    outputs += expand("{sample}/annotation/{sample}_metaerg.gff", sample=SAMPLES)
 
 
 rule all:
     input:
         outputs,
 
-
-# ---------------------------------------------------------------------------
-# Checkpoint: split assembly into batches
-# ---------------------------------------------------------------------------
 
 checkpoint split_assembly:
     """Split assembly into chunks for parallel processing.
@@ -129,7 +113,7 @@ checkpoint split_assembly:
         ),
     output:
         splitdir=directory("tmp/{sample}"),
-        done="tmp/{sample}/.split_done",
+        done=temp("tmp/{sample}/.split_done"),
     params:
         outdir=lambda wc: os.path.abspath("tmp/" + wc.sample),
         minlen=config["contig_annotation_thresh"],
@@ -145,8 +129,8 @@ checkpoint split_assembly:
     resources:
         mem_mb=8000,
     log:
-        e="logs/split_assembly_{sample}.e",
-        o="logs/split_assembly_{sample}.o",
+        e="{sample}/logs/split_assembly.e",
+        o="{sample}/logs/split_assembly.o",
     shell:
         # NOTE: --two-pass requires a real file path (not stdin); input.assembly
         # must be a seekable file, which it always is when supplied via config.
@@ -165,10 +149,6 @@ checkpoint split_assembly:
         """
 
 
-# ---------------------------------------------------------------------------
-# Per-batch ORF annotation (MetaERG)
-# ---------------------------------------------------------------------------
-
 rule annotate_orfs:
     """Run MetaERG on one assembly chunk.
 
@@ -182,16 +162,16 @@ rule annotate_orfs:
     input:
         assembly="tmp/{sample}/{batch}.fasta",
     output:
-        gff="annotation/{sample}/annotation_{batch}/data/either_all_or_master.gff",
-        ffn="annotation/{sample}/annotation_{batch}/data/cds.ffn",
-        faa="annotation/{sample}/annotation_{batch}/data/cds.faa",
+        gff=temp("{sample}/annotation/{batch}/data/either_all_or_master.gff"),
+        ffn=temp("{sample}/annotation/{batch}/data/cds.ffn"),
+        faa=temp("{sample}/annotation/{batch}/data/cds.faa"),
     resources:
         mem_mb=lambda wildcards, attempt: attempt * 8 * 1024,
         runtime=lambda wildcards, attempt: attempt * 45,
     threads: 4
     params:
         metaerg_db_dir=config["metaerg_db_dir"],
-        outdir=lambda wc: f"annotation/{wc.sample}/annotation_{wc.batch}",
+        outdir=lambda wc: f"{wc.sample}/annotation/{wc.batch}",
     shell:
         # FIX 5: Simplified, non-redundant GFF fallback logic.
         # master.gff.txt  -> full success
@@ -243,18 +223,14 @@ rule annotate_orfs:
         if [ ! -f "{output.faa}" ]; then
             echo "ERROR: cds.faa not found in data/ or tmp/" >&2; exit 1
         fi
-
+        rm -f {params.outdir}/stdin.part_*.tar.gz
         echo "Completed annotation for {wildcards.sample}/{wildcards.batch}"
         """
 
 
-# ---------------------------------------------------------------------------
-# Aggregation helpers (use shared get_batches helper – FIX 3)
-# ---------------------------------------------------------------------------
-
 def get_batch_gffs(wildcards):
     return expand(
-        "annotation/{sample}/annotation_{batch}/data/either_all_or_master.gff",
+        "{sample}/annotation/{batch}/data/either_all_or_master.gff",
         sample=wildcards.sample,
         batch=get_batches(wildcards),
     )
@@ -262,7 +238,7 @@ def get_batch_gffs(wildcards):
 
 def get_batch_ffns(wildcards):
     return expand(
-        "annotation/{sample}/annotation_{batch}/data/cds.ffn",
+        "{sample}/annotation/{batch}/data/cds.ffn",
         sample=wildcards.sample,
         batch=get_batches(wildcards),
     )
@@ -270,37 +246,28 @@ def get_batch_ffns(wildcards):
 
 def get_batch_faas(wildcards):
     return expand(
-        "annotation/{sample}/annotation_{batch}/data/cds.faa",
+        "{sample}/annotation/{batch}/data/cds.faa",
         sample=wildcards.sample,
         batch=get_batches(wildcards),
     )
 
-
-# ---------------------------------------------------------------------------
-# Join MetaERG outputs
-# FIX 10: this rule now also produces the merged FFN used downstream,
-#          eliminating the separate merge_all_genes_for_alignment rule.
-# FIX 8:  antismash now depends on {sample}_metaerg.gff which is always
-#          produced here; the file is only listed in `outputs` when
-#          check_contigs=True.
-# ---------------------------------------------------------------------------
 
 rule join_metaerg_outputs:
     input:
         gff=get_batch_gffs,
         ffn=get_batch_ffns,
     output:
-        gff="{sample}_metaerg.gff",
-        ffn="{sample}_metaerg.ffn",   # <-- reused by align_reads_to_all_genes
+        gff="{sample}/annotation/{sample}_metaerg.gff",  
+        ffn="{sample}/annotation/{sample}_metaerg.ffn", 
     container:
         config["docker_seqkit"]
     shell:
         """
         # Concatenate GFF files, keeping only the header from the first file
-        head -n 1 {input.gff[0]} > {output.gff}
-        for f in {input.gff}; do
-            tail -n+2 "$f" >> {output.gff}
-        done
+        grep "^##" {input.gff[0]} > {output.gff}
+            for f in {input.gff}; do
+        grep -v "^##" "$f" >> {output.gff}
+            done
 
         # Concatenate FFN files (no header stripping needed for FASTA)
         for f in {input.ffn}; do
@@ -309,27 +276,21 @@ rule join_metaerg_outputs:
         """
 
 
-# ---------------------------------------------------------------------------
-# AntiSMASH
-# FIX 6: inline shell comment after a line-continuation backslash was
-#         silently dropping --genefinding-tool none.  Comment moved above.
-# ---------------------------------------------------------------------------
-
 rule antismash:
     container:
         config["docker_antismash"]
     input:
         assembly=lambda wc: config["assembly"][wc.sample],
-        gff="{sample}_metaerg.gff",
+        gff="{sample}/annotation/{sample}_metaerg.gff",
     resources:
         mem_mb=lambda wildcards, attempt: attempt * 16 * 1024,
         runtime=6 * 60,
     threads: 16
     log:
-        o="logs/antismash_{sample}.log",
+        o="{sample}/logs/antismash.log",
     output:
-        gbk="{sample}_antismash.gbk",
-        outdir=directory("antismash_{sample}"),
+        gbk="{sample}/antismash/{sample}_antismash.gbk",
+        outdir=directory("{sample}/antismash/antismash_results/"),
     shell:
         # --genefinding-tool none: ignore contigs without genes
         # https://www.biostars.org/p/9539337/
@@ -340,7 +301,7 @@ rule antismash:
         antismash \
             --cpus {threads} \
             --allow-long-headers \
-            --output-dir antismash_{wildcards.sample} \
+            --output-dir {wildcards.sample}/antismash/antismash_results/ \
             {input.assembly} \
             --genefinding-gff {input.gff} \
             --verbose \
@@ -351,31 +312,27 @@ rule antismash:
             echo "antismash exited $exitcode; assembly may be too fragmented"
             touch {output.gbk}
         else
-            cat antismash_{wildcards.sample}/*.gbk > {output.gbk}
+            cat {wildcards.sample}/antismash/antismash_results/*.gbk > {output.gbk}
         fi
         """
 
 
 rule tabulate_antismash:
     input:
-        gbk="{sample}_antismash.gbk",
+        gbk="{sample}/antismash/{sample}_antismash.gbk", 
     output:
-        tab="{sample}_antismash.tab",
+        tab="{sample}/antismash/{sample}_antismash.tab",
     container:
         config["docker_biopython"]
     script:
         "../scripts/parse_antismash_gbk.py"
 
 
-# ---------------------------------------------------------------------------
-# Abricate & AMRFinder
-# ---------------------------------------------------------------------------
-
 rule annotate_abricate:
     input:
         assembly=lambda wc: config["assembly"][wc.sample],
     output:
-        out="{sample}_abricate_{tool}.tab",
+        out="{sample}/abricate/{tool}.tab",
     container:
         config["docker_abricate"]
     resources:
@@ -390,7 +347,7 @@ rule annotate_AMR:
     input:
         assembly=lambda wc: config["assembly"][wc.sample],
     output:
-        amr="{sample}_amrfinder.tab",
+        amr="{sample}/amrfinder/{sample}_amrfinder.tab",
     resources:
         mem_mb=4000,
         runtime=3 * 60,
@@ -402,12 +359,6 @@ rule annotate_AMR:
         """
 
 
-# ---------------------------------------------------------------------------
-# CAZyme annotation (per-batch, then merged)
-# FIX 9: set -e contradiction resolved – we now use set +e around run_dbcan
-#         only, so earlier setup commands still fail loudly.
-# ---------------------------------------------------------------------------
-
 def get_annotate_cazi_runtime(wildcards, attempt):
     return attempt * 3.5 * 60
 
@@ -418,15 +369,15 @@ def get_annotate_cazi_memory(wildcards, attempt):
 
 rule annotate_CAZI_split:
     input:
-        faa="annotation/{sample}/annotation_{batch}/data/cds.faa",
-        gff="annotation/{sample}/annotation_{batch}/data/either_all_or_master.gff",
+        faa="{sample}/annotation/{batch}/data/cds.faa", 
+        gff="{sample}/annotation/{batch}/data/either_all_or_master.gff",
     output:
-        overview="cazi_db_scan/{sample}/{batch}/overview.txt",
-        substrate="cazi_db_scan/{sample}/{batch}/substrate.out",
-        cgc="cazi_db_scan/{sample}/{batch}/cgc.out",
+        overview="{sample}/cazi/batches/{batch}/overview.txt", 
+        substrate="{sample}/cazi/batches/{batch}/substrate.out",
+        cgc="{sample}/cazi/batches/{batch}/cgc.out",
     params:
         cazi_db=config["cazi_db"],
-        outdir=lambda wc: f"cazi_db_scan/{wc.sample}/{wc.batch}",
+        outdir=lambda wc: f"{wc.sample}/cazi/batches/{wc.batch}",
     resources:
         mem_mb=get_annotate_cazi_memory,
         runtime=get_annotate_cazi_runtime,
@@ -455,20 +406,13 @@ rule annotate_CAZI_split:
         """
 
 
-# ---------------------------------------------------------------------------
-# Read alignment (global, per sample)
-# FIX 10: uses {sample}_metaerg.ffn directly; merge_all_genes_for_alignment
-#          rule removed.
-# FIX 7:  bowtie2 index declared as explicit outputs so Snakemake tracks them.
-# ---------------------------------------------------------------------------
-
 rule build_gene_index:
     """Build bowtie2 index from merged gene sequences."""
     input:
-        genes="{sample}_metaerg.ffn",
+        genes="{sample}/annotation/{sample}_metaerg.ffn",
     output:
         multiext(
-            "{sample}_genes_index",
+            "{sample}/annotation/{sample}_genes_index",
             ".1.bt2", ".2.bt2", ".3.bt2", ".4.bt2",
             ".rev.1.bt2", ".rev.2.bt2",
         ),
@@ -477,7 +421,7 @@ rule build_gene_index:
         config["docker_bowtie2"]
     shell:
         """
-        bowtie2-build --threads {threads} {input.genes} {wildcards.sample}_genes_index
+        bowtie2-build --threads {threads} {input.genes} {wildcards.sample}/annotation/{wildcards.sample}_genes_index
         """
 
 
@@ -485,15 +429,15 @@ rule align_reads_to_all_genes:
     """Align paired-end reads to the merged gene catalogue."""
     input:
         idx=multiext(
-            "{sample}_genes_index",
+            "{sample}/annotation/{sample}_genes_index",
             ".1.bt2", ".2.bt2", ".3.bt2", ".4.bt2",
             ".rev.1.bt2", ".rev.2.bt2",
         ),
         r1=lambda wc: config["R1"][wc.sample],
         r2=lambda wc: config["R2"][wc.sample],
     output:
-        bam="{sample}_aligned_reads.bam",
-        bai="{sample}_aligned_reads.bam.bai",
+        bam=temp("{sample}/annotation/{sample}_aligned_reads.bam"),
+        bai=temp("{sample}/annotation/{sample}_aligned_reads.bam.bai"),
     threads: 16
     resources:
         mem_mb=16 * 1024,
@@ -504,7 +448,7 @@ rule align_reads_to_all_genes:
         """
         bowtie2 --threads {threads} \
             -1 {input.r1} -2 {input.r2} \
-            -x {wildcards.sample}_genes_index \
+            -x {wildcards.sample}/annotation/{wildcards.sample}_genes_index \
             | samtools view -@ {threads} -Sb \
             | samtools sort -o {output.bam} -@ {threads}
         samtools index {output.bam}
@@ -514,10 +458,10 @@ rule align_reads_to_all_genes:
 rule calculate_gene_coverage:
     """Per-base 5'-end read depth across all genes (bedtools genomecov)."""
     input:
-        bam="{sample}_aligned_reads.bam",
-        bai="{sample}_aligned_reads.bam.bai",
+        bam="{sample}/annotation/{sample}_aligned_reads.bam",
+        bai="{sample}/annotation/{sample}_aligned_reads.bam.bai",
     output:
-        coverage="{sample}_gene_coverage.txt",
+        coverage=temp("{sample}/annotation/{sample}_gene_coverage.txt"),
     container:
         config["docker_bedtools"]
     shell:
@@ -526,19 +470,9 @@ rule calculate_gene_coverage:
         """
 
 
-# ---------------------------------------------------------------------------
-# RPM counts
-# FIX 1: batch wildcard conflict resolved.
-#         create_RPM_counts previously took both {sample} and {batch}
-#         wildcards but used a sample-level coverage file, causing the same
-#         coverage to be processed once per batch.  RPM calculation is now
-#         deferred to join_CAZI which has access to all batches at once and
-#         the full coverage file.  The per-batch rule is removed.
-# ---------------------------------------------------------------------------
-
 def get_cazi_overviews(wildcards):
     return expand(
-        "cazi_db_scan/{sample}/{batch}/overview.txt",
+        "{sample}/cazi/batches/{batch}/overview.txt",
         sample=wildcards.sample,
         batch=get_batches(wildcards),
     )
@@ -546,7 +480,7 @@ def get_cazi_overviews(wildcards):
 
 def get_cazi_substrates(wildcards):
     return expand(
-        "cazi_db_scan/{sample}/{batch}/substrate.out",
+        "{sample}/cazi/batches/{batch}/substrate.out",
         sample=wildcards.sample,
         batch=get_batches(wildcards),
     )
@@ -554,11 +488,20 @@ def get_cazi_substrates(wildcards):
 
 def get_cazi_cgcs(wildcards):
     return expand(
-        "cazi_db_scan/{sample}/{batch}/cgc.out",
+        "{sample}/cazi/batches/{batch}/cgc.out",
         sample=wildcards.sample,
         batch=get_batches(wildcards),
     )
 
+rule flagstat:
+    input:
+        bam="{sample}/annotation/{sample}_aligned_reads.bam",
+    output:
+        flagstat="{sample}/annotation/{sample}_flagstat.txt",
+    container:
+        config["docker_bowtie2"]
+    shell:
+        "samtools flagstat {input.bam} > {output.flagstat}"
 
 rule join_CAZI:
     """Merge per-batch CAZI results and compute RPM against global coverage."""
@@ -566,31 +509,14 @@ rule join_CAZI:
         overview=get_cazi_overviews,
         substrate=get_cazi_substrates,
         cgc=get_cazi_cgcs,
-        # FIX 1: single sample-level coverage file consumed once here
-        coverage="{sample}_gene_coverage.txt",
-        r1=lambda wc: config["R1"][wc.sample],
+        coverage="{sample}/annotation/{sample}_gene_coverage.txt",
+        flagstat="{sample}/annotation/{sample}_flagstat.txt",
     output:
-        overview="{sample}_cazi_overview.txt",
-        substrate="{sample}_cazi_substrate.out",
-        cgc="{sample}_cazi_cgc.out",
-        rpm="{sample}_annotated_cazymes_RPM.tsv",
+        overview="{sample}/cazi/{sample}_cazi_overview.txt",
+        substrate="{sample}/cazi/{sample}_cazi_substrate.out",
+        cgc="{sample}/cazi/{sample}_cazi_cgc.out", 
+        rpm="{sample}/cazi/{sample}_annotated_cazymes_RPM.tsv",
     conda:
         "../envs/annotate_output_parse.yaml"
     script:
         "../scripts/join_and_generate_RPM.py"
-    # NOTE: the previous shell join_files helper is replaced by the Python
-    # script so that RPM normalisation has access to all batches at once.
-    # If you prefer pure-shell merging, keep the shell block below and handle
-    # RPM in a separate rule that has no {batch} wildcard:
-    #
-    # shell:
-    #     """
-    #     join_files() {
-    #         out=$1; shift
-    #         head -n1 "$1" > "$out"
-    #         for f in "$@"; do tail -n+2 "$f" >> "$out"; done
-    #     }
-    #     join_files {output.overview} {input.overview}
-    #     join_files {output.substrate} {input.substrate}
-    #     join_files {output.cgc} {input.cgc}
-    #     """

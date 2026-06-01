@@ -149,24 +149,43 @@ def get_config_inputs_multisample(wc):
         }
 
 
-def bbmap_dedup_params_flags(wildcards, config):
+#def bbmap_dedup_params_flags(wildcards, config):
     # normal optical duplicate removal (HiSeq, MiSeq, etc)
     # should use these flags
-    flags = "dedupe optical"
+#    flags = "dedupe optical"
 
-    if "dedup_platform" in config:
-        if config["dedup_platform"] == "NextSeq":
+#    if "dedup_platform" in config:
+#        if config["dedup_platform"] == "NextSeq":
             # see their docs; this is the recommended command for NextSeq
             # https://www.biostars.org/p/225338/
-            flags = "dedupe optical spany adjacent"
+#            flags = "dedupe optical spany adjacent"
         # if SRA, they tossed the read names so we get errors in bbmap if they
         # try to parse the SRA names for optical deduplication
-        if config["dedup_platform"] == "SRA":
-            flags = "dedupe"
-        else:
-            dupedist = bbmap_dedup_params_dupedist(wildcards, config)
-            flags += f" dupedist={dupedist}"
-    return flags
+#        if config["dedup_platform"] == "SRA":
+#            flags = "dedupe"
+#        else:
+#            dupedist = bbmap_dedup_params_dupedist(wildcards, config)
+#            flags += f" dupedist={dupedist}"
+#    return flags
+def bbmap_dedup_params_flags(wildcards, config):
+    # Force-safe behavior if SRA detected
+    if config.get("is_sra", False):
+        return "dedupe"
+
+    # Default behavior
+    platform = config.get("dedup_platform", "HiSeq")
+
+    if platform == "SRA":
+        return "dedupe"
+
+    elif platform == "NextSeq":
+        dupedist = bbmap_dedup_params_dupedist(wildcards, config)
+        return f"dedupe optical spany adjacent dupedist={dupedist}"
+
+    else:
+        # HiSeq / NovaSeq / MiSeq
+        dupedist = bbmap_dedup_params_dupedist(wildcards, config)
+        return f"dedupe optical dupedist={dupedist}"
 
 
 def bbmap_dedup_params_dupedist(wildcards, config):

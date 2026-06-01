@@ -32,47 +32,58 @@ localrules:
     all,
 
 BINNING_TOOLS = ["concoct", "metabat2", "maxbin2"]
-#SAMPLES=config["sample"]
 
-binstats = expand(
-    "metawrap/rawbinning_{sample}/{tool}/{tool}_bins/{tool}.done",
-    sample=config["sample"],
-    tool=BINNING_TOOLS,)
+def sample_dir(sample):
+    return f"{sample}"
+
+def refined_dir(sample):
+    return (
+        f"{sample_dir(sample)}/refined_binning/"
+        f"metawrap_{config['metawrap_compl_thresh']}_"
+        f"{config['metawrap_contam_thresh']}_bins"
+    )
+
+def mag_dir(sample):
+    return refined_dir(sample)
+
+#binstats_all = expand(
+#    "metawrap/rawbinning_{sample}/{tool}/{tool}_bins/{tool}.done",
+#    sample=config["sample"],
+#    tool=BINNING_TOOLS,)
 
 refined_binstats_each = expand(
-    "metawrap/refined_binning_{sample}/{tool}_bins.stats",
+    "{sample}/refined_binning/{tool}_bins.stats",
     sample=config["sample"],
     tool=BINNING_TOOLS,)
 
 refined_stats = expand(
-     f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
-     sample=config["sample"])
+    f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
+    sample=config["sample"],)
 
 stats_mqc = expand(
-    f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats_mqc.tsv',
-    sample=config["sample"])
+    f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats_mqc.tsv',
+    sample=config["sample"],)
 
 contigs = expand(
-    f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.contigs',
-    sample=config["sample"])
+    f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.contigs',
+    sample=config["sample"],)
 
 covermreports = expand(
-    f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv',
-    sample=config["sample"])
-
-gtdbk=expand("gtdbtk/{sample}/", sample=config["sample"])
-prokka=expand("prokka/{sample}.done", sample=config["sample"])
+    f'{{sample}}/coverm/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv',
+    sample=config["sample"],)
+gtdbk = expand("{sample}/gtdbtk/", sample=config["sample"])
+prokka = expand("{sample}/prokka.done", sample=config["sample"])
 
 rule all:
     input:
-        binstats,
         refined_stats,
         refined_binstats_each,
         stats_mqc,
         contigs,
         covermreports,
         gtdbk,
-        prokka
+        prokka,
+        expand("{sample}/logs/cleanup_rawbinning.done", sample=config["sample"]),
 
 
 rule unzip_rename_fastq_for_metawrap:
@@ -97,7 +108,7 @@ rule metawrap_binning:
         R2="tmp_{sample}_2.fastq",
         assembly=lambda wc: config["assembly"][wc.sample],
     output:
-        stats="metawrap/rawbinning_{sample}/{tool}/{tool}_bins/{tool}.done",
+        stats=temp("metawrap/rawbinning_{sample}/{tool}/{tool}_bins/{tool}.done"),
     params:
         outdir=lambda wc, output: os.path.dirname(os.path.dirname(output.stats)),
     container:
@@ -114,21 +125,28 @@ rule metawrap_binning:
         touch {output.stats}
         """
 
+def get_binstats(wildcards):
+    return expand(
+        "metawrap/rawbinning_{sample}/{tool}/{tool}_bins/{tool}.done",
+        sample=wildcards.sample,
+        tool=BINNING_TOOLS,
+    )
 
-rule metawrap_refine_binning:
+
+checkpoint metawrap_refine_binning:
     """The names for the params binput_dirs is due to the crazy naming of the output of metawrap.
     The only consistant file we can use as a trigger is the <tool>.done file, but the refine module needs the dir beneath it under a path like
     metawrap/rawbinning_473/concoct/concoct_bins/concoct_bins
     """
     input:
-        binputs=binstats,
+        binputs=get_binstats,
     output:
-        stats=f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
-        stats_mqc=f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats_mqc.tsv',
-        contigs=f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.contigs',
-        bin1=f"metawrap/refined_binning_{{sample}}/{BINNING_TOOLS[0]}_bins.stats",
-        bin2=f"metawrap/refined_binning_{{sample}}/{BINNING_TOOLS[1]}_bins.stats",
-        bin3=f"metawrap/refined_binning_{{sample}}/{BINNING_TOOLS[2]}_bins.stats",
+        stats=f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
+        stats_mqc=f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats_mqc.tsv',
+        contigs=f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.contigs',
+        bin1=f"{{sample}}/refined_binning/{BINNING_TOOLS[0]}_bins.stats",
+        bin2=f"{{sample}}/refined_binning/{BINNING_TOOLS[1]}_bins.stats",
+        bin3=f"{{sample}}/refined_binning/{BINNING_TOOLS[2]}_bins.stats",
     params:
         outdir=lambda wc, output: os.path.dirname(output.stats),
         binput_dirs=lambda wc, input: [os.path.dirname(x) for x in input.binputs],
@@ -175,11 +193,11 @@ rule coverm:
     input:
         R1=lambda wc: config["R1"][wc.sample],
         R2=lambda wc: config["R2"][wc.sample],
-        stats=f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
+        stats=f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
     output:
-        mqc=f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv',
+        mqc=f'{{sample}}/coverm/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.coverage_mqc.tsv',
         bams=directory(
-            f'coverm/{{sample}}_metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bams/'),
+            f'{{sample}}/coverm/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bams/'),
     params:
         bindir=lambda wc, input: input.stats.replace(".stats", ""),
         fastq_string=lambda wc: " ".join(
@@ -210,42 +228,70 @@ rule coverm:
 
 
 
-def get_prokka_bins(wildcards):
-    bin_dir = "metawrap/refined_binning_{}/metawrap_{}_{}_{}/".format(
-        config['sample'],
-        config["metawrap_compl_thresh"],
-        config["metawrap_contam_thresh"],
-        "bins"
-    )
-    bins = glob_wildcards(bin_dir + "{bin}.fa").bin
-    return expand("prokka/{sample}/{bin}/",
-                  sample=config['sample'],
-                  bin=bins)
+#def get_prokka_bins(wildcards):
+#    bin_dir = "metawrap/refined_binning_{}/metawrap_{}_{}_{}/".format(
+#        config['sample'],
+#        config["metawrap_compl_thresh"],
+#        config["metawrap_contam_thresh"],
+#        "bins"
+#    )
+#    bins = glob_wildcards(bin_dir + "{bin}.fa").bin
+#    return expand("prokka/{sample}/{bin}/",
+#                  sample=config['sample'],
+#                  bin=bins)
 
 
-def mag_dir(sample):
-    return (
-        f"metawrap/refined_binning_{sample}/"
-        f"metawrap_{config['metawrap_compl_thresh']}_"
-        f"{config['metawrap_contam_thresh']}_bins"
-    )
+#def mag_dir(sample):
+#    return (
+#        f"metawrap/refined_binning_{sample}/"
+#        f"metawrap_{config['metawrap_compl_thresh']}_"
+#        f"{config['metawrap_contam_thresh']}_bins"
+#    )
 
-def get_mag_bins(wildcards):
-    """Dynamically get all bin .fa files for a sample after refinement."""
-    d = mag_dir(wildcards.sample)
-    return sorted(Path(d).glob("*.fa"))
+#def get_mag_bins(wildcards):
+#    """Dynamically get all bin .fa files for a sample after refinement."""
+#    d = mag_dir(wildcards.sample)
+#    return sorted(Path(d).glob("*.fa"))
 
+#def get_prokka_outputs(wildcards):
+#    """Get all expected Prokka output dirs for a sample."""
+#    d = mag_dir(wildcards.sample)
+#    bins = [f.stem for f in sorted(Path(d).glob("*.fa"))]
+#    return expand(
+#        "prokka/{sample}/{bin}/",
+#        sample=wildcards.sample,
+#        bin=bins,
+#    )
+#def get_prokka_outputs(wildcards):
+#    stats_file = (
+#        f"{wildcards.sample}/refined_binning/"
+#        f"metawrap_{config['metawrap_compl_thresh']}_"
+#        f"{config['metawrap_contam_thresh']}_bins.stats"
+#    )
+#    with open(stats_file) as f:
+#        next(f)  # skip header
+#        bins = [line.split("\t")[0] for line in f if line.strip()]
+#    return expand(
+#        "{sample}/prokka/{bin}/",
+#        sample=wildcards.sample,
+#        bin=bins,
+#    )
 def get_prokka_outputs(wildcards):
-    """Get all expected Prokka output dirs for a sample."""
-    d = mag_dir(wildcards.sample)
-    bins = [f.stem for f in sorted(Path(d).glob("*.fa"))]
+    # CHANGE: use checkpoint to wait for refinement before reading stats
+    checkpoints.metawrap_refine_binning.get(sample=wildcards.sample)
+    stats_file = (
+        f"{wildcards.sample}/refined_binning/"
+        f"metawrap_{config['metawrap_compl_thresh']}_"
+        f"{config['metawrap_contam_thresh']}_bins.stats"
+    )
+    with open(stats_file) as f:
+        next(f)
+        bins = [line.split("\t")[0] for line in f if line.strip()]
     return expand(
-        "prokka/{sample}/{bin}/",
+        "{sample}/prokka/{bin}/",
         sample=wildcards.sample,
         bin=bins,
     )
-
-
 #rule gtdbtk_classify_wf:
 #    """
 #    Taxonomic classification of MAGs using GTDB-Tk.
@@ -306,9 +352,9 @@ rule gtdbtk_classify_wf:
     """
     input:
         #triggering 
-        stats = f'metawrap/refined_binning_{{sample}}/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
+        stats=f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
     output:
-        directory("gtdbtk/{sample}/")
+        directory("{sample}/gtdbtk/")
     params:
         bins_dir  = lambda wc: mag_dir(wc.sample),
         extension = "fa",
@@ -343,7 +389,7 @@ rule prokka:
     input:
         bin = lambda wc: f"{mag_dir(wc.sample)}/{wc.bin}.fa",
     output:
-        directory("prokka/{sample}/{bin}/")
+        directory("{sample}/prokka/{bin}/")
     params:
         prefix       = "{bin}",
         mincontiglen = 500,
@@ -366,7 +412,17 @@ rule prokka_all_bins:
     input:
         get_prokka_outputs
     output:
-        touch("prokka/{sample}.done")
+        touch("{sample}/prokka.done")
 
-
-
+rule cleanup_rawbinning:
+    input:
+        # only runs after refinement is complete
+        refined=f'{{sample}}/refined_binning/metawrap_{config["metawrap_compl_thresh"]}_{config["metawrap_contam_thresh"]}_bins.stats',
+    output:
+        touch("{sample}/logs/cleanup_rawbinning.done")
+    params:
+        rawdir="metawrap/rawbinning_{sample}/"
+    shell:
+        """
+        rm -rf {params.rawdir}
+        """
