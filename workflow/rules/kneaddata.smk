@@ -24,8 +24,7 @@ rule kneaddata_run:
         out_prefix="{sample}_shard{shard}_knead",
         out_dir=os.path.join(TMPDIR, "{sample}_shard{shard}"),
     resources:
-        mem_mb=lambda wildcards, attempt: attempt * 12000,
-        runtime="12:00",
+        mem_mb=48000
     container:
         config["docker_kneaddata"]
     conda:

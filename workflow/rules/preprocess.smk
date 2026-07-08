@@ -178,9 +178,7 @@ rule bbmap_dedup:
         ),
     threads: 8
     resources:
-        mem_mb=lambda wildcards, input, attempt: attempt
-        * (max(input.size // 1000000, 1024) * 10),
-        runtime=lambda wildcards, attempt: 1 * 60 * attempt * attempt,
+        mem_mb=48000
     log:
         # this is annoying but we want to be able to extract the stats from
         # the logs, which we can't do without the logs as a file. Perhaps
@@ -264,7 +262,7 @@ rule bbmap_run:
             else f"outm={output.rm_reads[0]}"
         ),
     resources:
-        mem_mb=4000,
+        mem_mb=16000,
     container:
         config["docker_bbtools"]
     conda:
@@ -356,6 +354,9 @@ rule cat_depletion_stats:
         ],
     output:
         table="reports/{sample}_hostdepletion.stats",
+    threads: 1
+    resources: 
+        mem_mb=1000
     shell:
         """
         head -n 1 {input.table[0]} > {output.table}
@@ -377,6 +378,8 @@ rule merge_shards:
     container:
         config["docker_cutadapt"]
     threads: 16
+    resources:
+	mem_mb=8000
     log:
         e="logs/merge_compress_{sample}_R{rd}.e",
     shell:
@@ -394,6 +397,9 @@ rule cat_dedup_stats:
         ],
     output:
         table="reports/{sample}_dedup.stats",
+    threads: 1
+    resources:
+	mem_mb=1000
     shell:
         """
         head -n 1 {input.table[0]} > {output.table}
@@ -427,6 +433,8 @@ rule merge_dedup_shards:
     container:
         config["docker_cutadapt"]
     threads: 16
+    resources:
+	mem_mb=8000
     log:
         e="logs/merge_dedup_shards_{sample}_R{rd}.e",
     shell:
@@ -472,7 +480,7 @@ rule aligned_host_reads_to_fastq:
         aligned_samflags="-f 2 -F 512" if is_paired() else "-F 3844",
     threads: 8
     resources:
-        runtime=2 * 60,
+        mem_mb=16000,
     container:
         config["docker_bowtie2"]
     shell:
@@ -506,7 +514,7 @@ rule make_combined_host_reads_fastq:
         R1="host/{sample}_all_host_reads_R{readdir}.fastq.gz",
     threads: 8
     resources:
-        runtime=2 * 60,
+        mem_mb=8000,
     container:
         config["docker_bowtie2"]
     shell:
@@ -535,8 +543,7 @@ rule sortmerna_run:
             else f"--reads {input['R1']}"
         ),
     resources:
-        mem_mb=lambda wc, attempt: 6 * 1024 * attempt,
-        runtime=lambda wc, attempt: 2 * 60 * attempt * attempt * attempt,
+        mem_mb=32000,
     threads: 16
     message:
         "Quantify rRNA for qPCR normalization and 16S comparison"
@@ -588,6 +595,9 @@ rule merge_sortmerna_blast:
         )
     output:
         blast = "sortmerna/{sample}_sortmerna.blast.gz"
+    threads: 1
+    resources:
+	mem_mb=2000,
     log:
         e = "logs/merge_sortmerna_blast_{sample}.e"
     shell:
@@ -608,6 +618,9 @@ rule merge_logs_for_multiqc:
         sortmerna_log="reports/{sample}_sortmerna.merged.log",
         knead="reports/{sample}_hostdeplete.stats.summary_mqc.tsv",
         bbtrim="reports/{sample}_trimmingAQ_summary.txt",
+    threads: 2
+    resources:
+	mem_mb=4000,
     params:
         sample_name=lambda wc: wc.sample,
     container:
@@ -637,6 +650,9 @@ rule merge_primary_host_align_bams:
     output:
         bam=f"host/{{sample}}.{bowtie2_human_db_name}.bam",
         bai=f"host/{{sample}}.{bowtie2_human_db_name}.bam.bai",
+    threads: 8
+    resources:
+	mem_mb=32000,
     container:
         config["docker_bowtie2"]
     shell:

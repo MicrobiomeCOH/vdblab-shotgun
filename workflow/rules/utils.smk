@@ -16,7 +16,7 @@ rule split_fastq:
         nshards=1,
     container:
         "docker://pegi3s/seqkit:2.3.0"
-    threads: 4  # see their docs
+    threads: 4  
     resources:
         mem_mb=4000,
     log:
@@ -46,7 +46,7 @@ rule merge_shards:
         R2="",
     threads: 1
     resources:
-        mem_mb=1024,
+        mem_mb=1000,
     shell:
         """
         cat {input.R1} > {output.R1} 2> {log.e}
@@ -70,6 +70,9 @@ rule concat_lanes_fix_names:
         fq=[],
     output:
         fq="out_{sample}.1.fq.gz",
+    threads: 2
+    resources:
+	mem_mb=4000,
     log:
         e="logs/concat_lanes_fix_names_{sample}.e",
     shell:

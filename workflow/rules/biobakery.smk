@@ -77,6 +77,9 @@ rule cat_pair:
         unpack(get_config_inputs_multisample),
     output:
         joined=temp("kneaddata/{sample}_knead_cat.fastq.gz"),
+    resources:
+        mem_mb=1000,
+    threads: 2
     conda:
         "../envs/base.yaml"
     log:
@@ -103,13 +106,8 @@ rule humann3_run_uniref90:
     conda:
         "../envs/humann.yaml"
     resources:
-        mem_mb=lambda wildcards, attempt, input: attempt
-        * 1024
-        * max(input.fastq.size // 1000000000, 1)
-        * 5
-        * attempt,
-        runtime=lambda wc, attempt: 8 * 60 * attempt,
-    threads: 64
+        mem_mb=64000
+    threads: 32
     # we have an extra log in case there is an error with humann.  Cause
     # we skip the built in logging because
     # they dont actually log errors to their --o-log :(
@@ -150,6 +148,9 @@ rule renormalize_pabun:
         path_out="humann/{sample}_humann3_pathabundance_cpm.tsv",
     container:
         config["docker_biobakery"]
+    resources:
+        mem_mb=4000,
+    threads: 2
     conda:
         "../envs/humann.yaml"
     log:
@@ -175,6 +176,9 @@ rule regroup_genefam_2_KO:
         out="humann/{sample}_humann3_KO.tsv",
     container:
         config["docker_biobakery"]
+    resources:
+        mem_mb=8000,
+    threads: 4
     conda:
         "../envs/humann.yaml"
     log:
@@ -200,6 +204,9 @@ rule renormalize_KO:
         path_out="humann/{sample}_humann3_KO_cpm.tsv",
     container:
         config["docker_biobakery"]
+    resources:
+        mem_mb=4000,
+    threads: 2
     conda:
         "../envs/humann.yaml"
     log:
@@ -233,6 +240,9 @@ rule join_table:
         res_dir="humann/",
     container:
         config["docker_biobakery"]
+    resources:
+        mem_mb=16000,
+    threads: 4
     conda:
         "../envs/humann.yaml"
     log:
@@ -286,6 +296,9 @@ rule split_stratified:
         output_dir=directory("humann3_final_out"),
     container:
         config["docker_biobakery"]
+    resources:
+        mem_mb=4000,
+    threads: 2
     conda:
         "../envs/humann.yaml"
     log:
@@ -317,8 +330,7 @@ rule metaphlan_run:
         "../envs/metaphlan.yaml"
     resources:
         # first submission is given 30GB, then 45,
-        mem_mb=lambda wildcards, attempt: 30 * 1024 * attempt,
-        runtime=lambda wc, attempt: 2 * 60 * attempt,
+        mem_mb=32000,
     threads: 32
     log:
         e="logs/metaphlan_{sample}.e",
@@ -356,7 +368,7 @@ rule merge_metaphlan_table:
    conda:
         "../envs/metaphlan.yaml"
    resources:
-        mem_mb=1 * 1024,
+        mem_mb=1000,
    threads: 2
    log:
         e="logs/metaphlan_merge_table.e",
@@ -376,7 +388,7 @@ rule metaphlan2_krona:
     conda:
         "../envs/metaphlan.yaml"
     resources:
-        mem_mb=1 * 1024,
+        mem_mb=1000,
     threads: 1
     log:
         e="logs/metaphlan2krona_{sample}.e",
@@ -395,7 +407,7 @@ rule krona:
     container:
         config["docker_krona"]
     resources:
-        mem_mb=1 * 1024,
+        mem_mb=1000,
     threads: 1
     log:
         e="logs/krona_{sample}.e",
