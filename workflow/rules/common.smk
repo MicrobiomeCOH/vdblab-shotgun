@@ -145,7 +145,7 @@ def get_config_inputs_multisample(wc):
         }
     else:
         return {
-            "R1": config["fastq"][wc.sample]["R1"],
+            "R1": config["R1"][wc.sample],
         }
 
 

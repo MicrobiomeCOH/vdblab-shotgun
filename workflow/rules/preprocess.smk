@@ -45,7 +45,7 @@ localrules:
 #pabun_cpm = expand("humann/{SAMPLE}_humann3_pathabundance_cpm.tsv",SAMPLE=config['sample'])
 
 sortmerna_outputs = expand("reports/{SAMPLE}_sortmerna.merged.log",SAMPLE=config['sample'])
-cleaned_fastqs = expand("hostdepleted/{SAMPLE}_R{read_dir}.fastq.gz",
+cleaned_fastqs = expand("hostdepleted/{SAMPLE}_R{read_dir}.fastq",
     SAMPLE=config["sample"],
     read_dir=config["readdirs"],
 )
@@ -538,7 +538,7 @@ rule sortmerna_run:
             ".blast.gz", ""
         ),
         inputstring=lambda wc, input: (
-            f"--reads {input['R1']} --reads {input['R1']}"
+            f"--reads {input['R1']} --reads {input['R2']}"
             if is_paired()
             else f"--reads {input['R1']}"
         ),
@@ -653,6 +653,8 @@ rule merge_primary_host_align_bams:
     threads: 8
     resources:
 	mem_mb=32000,
+    params:
+        aligned_samflags=lambda wc: "-f 2 -F 512" if is_paired() else "-F 3844",
     container:
         config["docker_bowtie2"]
     shell:
@@ -663,7 +665,7 @@ rule merge_primary_host_align_bams:
             thisbasename=$(basename $i)
             thisbase=${{thisbasename%.*}}
             echo "getting passing mapped reads $i"
-            samtools view  -f 2 -F 512 -b -o tmp_{wildcards.sample}_merge/${{thisbase}}.bam $i
+            samtools view {params.aligned_samflags} -b -o tmp_{wildcards.sample}_merge/${{thisbase}}.bam $i
             echo "sorting $i"
             samtools sort -o \
                 tmp_{wildcards.sample}_merge/${{thisbase}}.sort.bam \
