@@ -652,13 +652,10 @@ rule merge_primary_host_align_bams:
         bai=f"host/{{sample}}.{bowtie2_human_db_name}.bam.bai",
     threads: 8
     resources:
-<<<<<<< HEAD
 	mem_mb=32000,
     params:
         aligned_samflags=lambda wc: "-f 2 -F 512" if is_paired() else "-F 3844",
-=======
         mem_mb=32000,
->>>>>>> 125b3d5 (Unpaired reads compatible)
     container:
         config["docker_bowtie2"]
     shell:
