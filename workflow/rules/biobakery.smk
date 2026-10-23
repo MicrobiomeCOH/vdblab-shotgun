@@ -330,8 +330,8 @@ rule metaphlan_run:
         "../envs/metaphlan.yaml"
     resources:
         # first submission is given 30GB, then 45,
-        mem_mb=32000,
-    threads: 32
+        mem_mb=64000,
+    threads: 16
     log:
         e="logs/metaphlan_{sample}.e",
     shell:

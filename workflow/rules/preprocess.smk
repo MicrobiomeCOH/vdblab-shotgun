@@ -379,7 +379,7 @@ rule merge_shards:
         config["docker_cutadapt"]
     threads: 16
     resources:
-	mem_mb=8000
+        mem_mb=8000
     log:
         e="logs/merge_compress_{sample}_R{rd}.e",
     shell:
@@ -399,7 +399,7 @@ rule cat_dedup_stats:
         table="reports/{sample}_dedup.stats",
     threads: 1
     resources:
-	mem_mb=1000
+        mem_mb=1000
     shell:
         """
         head -n 1 {input.table[0]} > {output.table}
@@ -434,7 +434,7 @@ rule merge_dedup_shards:
         config["docker_cutadapt"]
     threads: 16
     resources:
-	mem_mb=8000
+        mem_mb=8000
     log:
         e="logs/merge_dedup_shards_{sample}_R{rd}.e",
     shell:
@@ -597,7 +597,7 @@ rule merge_sortmerna_blast:
         blast = "sortmerna/{sample}_sortmerna.blast.gz"
     threads: 1
     resources:
-	mem_mb=2000,
+        mem_mb=2000,
     log:
         e = "logs/merge_sortmerna_blast_{sample}.e"
     shell:
@@ -620,7 +620,7 @@ rule merge_logs_for_multiqc:
         bbtrim="reports/{sample}_trimmingAQ_summary.txt",
     threads: 2
     resources:
-	mem_mb=4000,
+        mem_mb=4000,
     params:
         sample_name=lambda wc: wc.sample,
     container:
@@ -652,9 +652,13 @@ rule merge_primary_host_align_bams:
         bai=f"host/{{sample}}.{bowtie2_human_db_name}.bam.bai",
     threads: 8
     resources:
+<<<<<<< HEAD
 	mem_mb=32000,
     params:
         aligned_samflags=lambda wc: "-f 2 -F 512" if is_paired() else "-F 3844",
+=======
+        mem_mb=32000,
+>>>>>>> 125b3d5 (Unpaired reads compatible)
     container:
         config["docker_bowtie2"]
     shell:

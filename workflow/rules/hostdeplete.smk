@@ -87,9 +87,9 @@ rule s01_bowtie2:
         input_string=lambda wildcards, input: (
             f"-1 {input.R1} -2 {input.R2}" if is_paired() else f"-U {input.R1}"
         ),
-    threads: 16
+    threads: 8
     resources:
-        mem_mb=16000,
+        mem_mb=64000,
     shell:
         """
           (bowtie2 \
@@ -128,8 +128,8 @@ rule s02_snapalign:
         db_prefix=lambda wildcards, input: os.path.dirname(input.idx_genome),
         cmd=config["lib_layout"],
     resources:
-        mem_mb=16000
-    threads: 16  # Use at least two threads
+        mem_mb=32000
+    threads: 8  # Use at least two threads
     shell:
         """
         snap-aligner {params.cmd} {params.db_prefix} \
@@ -176,7 +176,7 @@ rule s03_get_unmapped:
         o=f"logs/get_unmapped_human_{{sample}}.o",
     threads: 8
     resources:
-        mem_mb=16000
+        mem_mb=32000
     shell:
         """
         samtools flagstat {input.bam} > {output.flagstat}
@@ -242,9 +242,9 @@ use rule s01_bowtie2 as s04_bowtie2_mouse with:
                 rd=config["readdirs"],
             )
         ),
-    threads: 16
+    threads: 8
     resources:
-	mem_mb=16000
+        mem_mb=64000
     log:
         e=f"logs/bowtie2_{{sample}}.{bowtie2_mouse_db_name}.e",
         o=f"logs/bowtie2_{{sample}}.{bowtie2_mouse_db_name}.o",
@@ -261,9 +261,9 @@ use rule s02_snapalign as s05_snapalign_mouse with:
         idx_genome=f"{config['snap_mouse_index_dir']}Genome",
     output:
         bam=temp(f"05-snap/{{sample}}.{snap_mouse_db_name}.bam"),
-    threads: 16
+    threads: 8
     resources:
-	mem_mb=16000
+        mem_mb=32000
     log:
         e=f"logs/snap_{{sample}}.{snap_mouse_db_name}.e",
         o=f"logs/snap_{{sample}}.{snap_mouse_db_name}.o",
@@ -277,9 +277,9 @@ use rule s03_get_unmapped as s06_get_unmapped_human_mouse with:
             expand("06-nohuman-nomouse/{{sample}}.R{rd}.fastq", rd=config["readdirs"])
         ),
         flagstat=f"05-snap/{{sample}}.{snap_mouse_db_name}.bam.flagstat",
-    threads: 16
+    threads: 8
     resources:
-	mem_mb=16000
+        mem_mb=32000
     log:
         e=f"logs/get_unmapped_human_mouse_{{sample}}.e",
         o=f"logs/get_unmapped_human_mouse_{{sample}}.o",
@@ -297,7 +297,7 @@ rule tally_depletion:
         config["docker_bowtie2"]
     threads: 1
     resources:
-	mem_mb=2000
+        mem_mb=2000
     shell:
         """
         human_bowtie=$(samtools view  -c  {input.bam01})

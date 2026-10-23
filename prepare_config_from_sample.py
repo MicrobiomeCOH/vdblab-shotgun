@@ -62,8 +62,9 @@ updated_data = update_values(data)
 # Adding fastq and sample manifest file
 updated_data["sample"] = []  # Initialize as a list
 updated_data["R1"] = {}  # Ensure 'R1' key exists
-updated_data["R2"] = {}  # Ensure 'R2' key exists
+#updated_data["R2"] = {}  # Ensure 'R2' key exists
 sample_manifest_file = args.sample_manifest
+r2_values = {}
 
 #Read manifest CSV file
 with open(sample_manifest_file, newline='') as file:
@@ -73,7 +74,23 @@ with open(sample_manifest_file, newline='') as file:
         updated_data["sample"].append(sample)
 
         updated_data["R1"][sample] = row["R1"].strip().split(",")
-        updated_data["R2"][sample] = row["R2"].strip().split(",")
+        #updated_data["R2"][sample] = row["R2"].strip().split(",")
+        #updated_data["R2"][sample] = [x.strip() for x in row["R2"].split(",") if x.strip()]
+        r2_raw = row.get("R2", "")
+        r2_list = [x.strip() for x in r2_raw.split(",") if x.strip()]
+        if r2_list:
+            r2_values[sample] = r2_list
+
+
+if r2_values:
+    if len(r2_values) != len(updated_data["sample"]):
+        raise ValueError(
+            "Manifest has a mix of samples with and without R2 — "
+            "all samples in a single manifest must have the same lib_layout."
+        )
+    updated_data["R2"] = r2_values
+
+
 
 directory_file=args.directory
 updated_data["directory"] = directory_file

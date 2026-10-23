@@ -23,6 +23,12 @@ def concat_tsv_files(file_list):
     return pd.DataFrame()
 
 
+def count_reads_from_flagstat(flagstat_file):
+    with open(flagstat_file) as fh:
+        first_line = fh.readline().strip()
+    return float(first_line.split()[0])
+
+
 def count_num_reads_compressed_file(file_name):
     """Return the number of reads in a gzipped FASTQ file."""
     command = f"echo $(($(zcat {file_name} | wc -l)/4))"
@@ -177,7 +183,7 @@ def main(
     substrate_files,
     cgc_files,
     coverage_path,
-    r1_path,
+    flagstat_path,
     out_overview,
     out_substrate,
     out_cgc,
@@ -199,8 +205,8 @@ def main(
         pd.DataFrame().to_csv(out_rpm, sep="\t")
         return
 
-    num_reads = count_num_reads_compressed_file(r1_path)
-    print(f"Total reads in {r1_path}: {num_reads:.0f}")
+    num_reads = count_reads_from_flagstat(flagstat_path)
+    print(f"Total reads in {flagstat_path}: {num_reads:.0f}")
 
     rpm_df = build_rpm_table(
         overview_df, substrate_df, cgc_df, coverage_path, num_reads
@@ -216,7 +222,7 @@ if __name__ == "__main__":
         substrate_files = list(snakemake.input.substrate)
         cgc_files       = list(snakemake.input.cgc)
         coverage_path   = str(snakemake.input.coverage)
-        r1_path         = str(snakemake.input.r1)
+        flagstat_path = str(snakemake.input.flagstat)
         out_overview    = str(snakemake.output.overview)
         out_substrate   = str(snakemake.output.substrate)
         out_cgc         = str(snakemake.output.cgc)
@@ -230,7 +236,7 @@ if __name__ == "__main__":
         p.add_argument("--substrate", nargs="+", required=True)
         p.add_argument("--cgc",       nargs="+", required=True)
         p.add_argument("--coverage",  required=True)
-        p.add_argument("--r1",        required=True)
+        p.add_argument("--flagstat", required=True)
         p.add_argument("--out-overview",  required=True, dest="out_overview")
         p.add_argument("--out-substrate", required=True, dest="out_substrate")
         p.add_argument("--out-cgc",       required=True, dest="out_cgc")
@@ -240,7 +246,7 @@ if __name__ == "__main__":
         substrate_files = args.substrate
         cgc_files       = args.cgc
         coverage_path   = args.coverage
-        r1_path         = args.r1
+        flagstat_path   = args.flagstat
         out_overview    = args.out_overview
         out_substrate   = args.out_substrate
         out_cgc         = args.out_cgc
@@ -251,7 +257,7 @@ if __name__ == "__main__":
         substrate_files,
         cgc_files,
         coverage_path,
-        r1_path,
+        flagstat_path,
         out_overview,
         out_substrate,
         out_cgc,

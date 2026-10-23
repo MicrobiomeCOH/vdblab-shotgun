@@ -72,7 +72,7 @@ rule concat_lanes_fix_names:
         fq="out_{sample}.1.fq.gz",
     threads: 2
     resources:
-	mem_mb=4000,
+        mem_mb=4000,
     log:
         e="logs/concat_lanes_fix_names_{sample}.e",
     shell:

@@ -27,6 +27,7 @@ validate(
 )
 '''
 
+
 SHARDS = make_shard_names(config["nshards"])
 
 
@@ -103,31 +104,29 @@ use rule * from biobakery as biobakery_*
 #
 # Sylph Module
 #
-module sylph:
-    snakefile:
-        "rules/sylph.smk"
-    config:
-        config
-    skip_validation:
-        True
+#module sylph:
+#    snakefile:
+#        "rules/sylph.smk"
+#    config:
+#        config
+#    skip_validation:
+#        True
 
-
-use rule * from sylph as sylph_*
+#use rule * from sylph as sylph_*
 
 
 #
 # qc Module
 #
-module qc:
-    snakefile:
-        "rules/qc.smk"
-    config:
-        config
-    skip_validation:
-        True
+#module qc:
+#    snakefile:
+#        "rules/qc.smk"
+#    config:
+#        config
+#    skip_validation:
+#        True
 
-
-use rule * from qc as qc_*
+#use rule * from qc as qc_*
 
 
 #
@@ -234,6 +233,34 @@ if is_paired():
     use rule * from downsample as downsample_*
 
 
+    #
+    # Sylph Module
+    #
+    module sylph:
+        snakefile:
+            "rules/sylph.smk"
+        config:
+            config
+        skip_validation:
+            True
+
+    use rule * from sylph as sylph_*
+
+
+    #
+    # qc Module
+    #
+    module qc:
+        snakefile:
+            "rules/qc.smk"
+        config:
+            config
+        skip_validation:
+            True
+
+    use rule * from qc as qc_*
+
+
 if config["stage"] == "classify_bins":
 
     module classify_bins:
@@ -258,16 +285,16 @@ The wildcard_constraints below ensures that the sample wildcard never ends with 
 needing this probably means I could specify file names more cleanly :/
 """
 
-if config["stage"] == "all" or config["stage"] == "biobakery" :
+if config["stage"] == "all":
     if config["lib_layout"] != "paired":
         raise ValueError(
             f"lib_layout must be 'paired' to run 'all' stages of the pipeline; please run modules individually (eg --config stage=preprocess)"
         )
 
-    use rule cat_pair from biobakery as biobakery_cat_pair with:
-        input:
-            R1="hostdepleted/{sample}_R1.fastq.gz",
-            R2="hostdepleted/{sample}_R2.fastq.gz",
+    #use rule cat_pair from biobakery as biobakery_cat_pair with:
+    #    input:
+    #        R1="hostdepleted/{sample}_R1.fastq.gz",
+    #        R2="hostdepleted/{sample}_R2.fastq.gz",
 
     use rule RGI from rgi as rgi_RGI with:
         input:
@@ -327,6 +354,19 @@ if config["stage"] == "all" or config["stage"] == "biobakery" :
         wildcard_constraints:
             sample=".+(?<!shard\d\d\d)",
 
+
+
+if config["stage"] == "all" or config["stage"] == "biobakery":
+
+    def get_cat_pair_chain_input(wc):
+        res = {"R1": f"hostdepleted/{wc.sample}_R1.fastq.gz"}
+        if is_paired():
+            res["R2"] = f"hostdepleted/{wc.sample}_R2.fastq.gz"
+        return res
+
+    use rule cat_pair from biobakery as biobakery_cat_pair with:
+        input:
+            unpack(get_cat_pair_chain_input),
 
 #print ("OUTPUT 0")
 #print (outputs)
